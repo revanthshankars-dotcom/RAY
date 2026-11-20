@@ -1,0 +1,29 @@
+# RAY runtime data (created on first launch)
+.runtime/
+*.db
+*.db-wal
+*.db-shm
+secret.key
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Node (only used by the optional UI smoke test)
+node_modules/
+package-lock.json
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

@@ -1,99 +1,179 @@
+#!/usr/bin/env python3
+"""RAY - Real-time Autonomous Yourself.
+
+Start the personal AI operating system:
+
+    python main.py                 # desktop window on Windows, browser elsewhere
+    python main.py --browser       # force the browser interface
+    python main.py --headless      # engine + API only (no window)
+    python main.py --check         # environment / dependency report
+    python main.py --port 9000     # a different port
+
+Everything RAY stores lives in one folder (see --check for the exact path).
+"""
+
+from __future__ import annotations
+
+import argparse
 import os
-import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from openai import OpenAI
-from dotenv import load_dotenv
+import signal
+import sys
+import threading
+import time
+from pathlib import Path
 
-load_dotenv()
-
-# ========== CONFIG ==========
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # optional
-
-# Free / cheap models (you can change these)
-PRIMARY_MODEL = "meta-llama/llama-3.2-3b-instruct:free"   # OpenRouter free
-FALLBACK_MODEL = "google/gemini-flash-1.5"               # if you add Gemini support later
-
-SYSTEM_PROMPT = """You are my personal AI friend. Your name is Aria.
-
-Personality:
-- Warm, calm, slightly witty, and genuinely caring — like a close friend who is always there.
-- Never overly formal or robotic.
-- You can be playful but stay natural.
-
-Language rules:
-- Default language is English.
-- Switch to Tamil only when I write in Tamil, ask you to speak Tamil, or when it clearly fits the moment.
-- Keep replies clear and natural.
-
-Behavior:
-- Be a good listener. When I just want to talk, listen and respond supportively.
-- Keep most replies short and conversational unless I ask for more.
-- Remember important things I tell you about my life, mood, goals, and preferences.
-- You may send occasional friendly check-ins (maximum 1–2 times per week). Keep them light.
-- Always be ready when I message you."""
-
-# Simple in-memory conversation (for start)
-conversation_history = []
-
-# OpenRouter client
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
-
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hey, I'm Aria. I'm here whenever you want to talk.")
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="RAY - personal AI operating system")
+    parser.add_argument("--home", help="override the RAY data folder (default: %%LOCALAPPDATA%%\\RAY)")
+    parser.add_argument("--host", help="interface bind address (default from settings: 127.0.0.1)")
+    parser.add_argument("--port", type=int, help="interface port (default 8765)")
+    parser.add_argument("--desktop", action="store_true", help="open the native PySide6 window")
+    parser.add_argument("--browser", action="store_true", help="open the interface in your browser")
+    parser.add_argument("--headless", action="store_true", help="run the engine without opening a window")
+    parser.add_argument("--no-open", action="store_true", help="do not open a window or browser")
+    parser.add_argument("--check", action="store_true", help="print an environment report and exit")
+    parser.add_argument("--log-level", default="INFO", help="DEBUG, INFO, WARNING or ERROR")
+    return parser.parse_args(argv)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
+def environment_report(home: str | None) -> int:
+    from ray import __version__
+    from ray.core.paths import Paths
+    from ray.desktop.shell import check_dependencies
 
-    # Add user message to history
-    conversation_history.append({"role": "user", "content": user_message})
+    paths = Paths(home) if home else Paths()
+    print(f"RAY {__version__}")
+    print(f"Python          : {sys.version.split()[0]} ({sys.executable})")
+    print(f"Platform        : {sys.platform}")
+    print(f"Data folder     : {paths.home}")
+    print(f"Database        : {paths.db_path}")
+    print(f"Logs            : {paths.logs}")
 
-    # Keep history short to save credits
-    if len(conversation_history) > 12:
-        conversation_history.pop(0)
-        conversation_history.pop(0)
+    checks: list[tuple[str, bool, str]] = []
+    for module, purpose in (
+        ("psutil", "system monitoring"),
+        ("httpx", "AI provider calls"),
+        ("cryptography", "encrypted credential vault"),
+        ("pypdf", "PDF reading"),
+    ):
+        try:
+            __import__(module)
+            checks.append((module, True, purpose))
+        except ImportError:
+            checks.append((module, False, purpose))
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
+    print("\nRequired packages:")
+    for module, present, purpose in checks:
+        print(f"  {'OK  ' if present else 'MISS'} {module:14} {purpose}")
+
+    desktop_ok, desktop_detail = check_dependencies()
+    print(f"\nDesktop window  : {'available' if desktop_ok else 'unavailable - ' + desktop_detail}")
+    for optional, purpose in (
+        ("PIL", "image metadata"), ("mutagen", "audio tags"), ("pynput", "keyboard/mouse automation"),
+        ("pyperclip", "clipboard"), ("faster_whisper", "offline speech-to-text"),
+    ):
+        try:
+            __import__(optional)
+            print(f"  OK   {optional:16} {purpose}")
+        except ImportError:
+            print(f"  --   {optional:16} {purpose} (optional)")
+
+    api_keys = {
+        name: bool(os.environ.get(env))
+        for name, env in (("grok", "XAI_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("fish", "FISH_AUDIO_API_KEY"))
+    }
+    print("\nProvider keys in environment:", ", ".join(f"{k}={'set' if v else 'unset'}" for k, v in api_keys.items()))
+    print("(Keys entered in the RAY interface are stored encrypted in the data folder.)")
+    missing = [module for module, present, _ in checks if not present]
+    if missing:
+        print(f"\nInstall missing packages:  pip install {' '.join(missing)}")
+        return 1
+    print("\nEnvironment is ready. Run: python main.py")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+    if args.check:
+        return environment_report(args.home)
+
+    from ray.app import RayApp
+    from ray.server.app import create_server, find_free_port
+
+    app = RayApp(home=args.home, log_level=args.log_level)
+    host = args.host or str(app.config.get("ui.host", "127.0.0.1"))
+    port = args.port or int(app.config.get("ui.port", 8765))
+    if port and not args.port:
+        probe = find_free_port(host, port)
+        if probe != port:
+            from ray.core.logging_setup import get_logger
+
+            get_logger("main").warning("port %s busy, using %s", port, probe)
+            port = probe or 0
+
+    server = create_server(app, host=host, port=port)
+    server.start()
+    app.start()
+
+    url = server.url
+    print("\n" + "=" * 66)
+    print(f"  RAY is running at {url}")
+    print(f"  Data folder: {app.paths.home}")
+    print("  Press Ctrl+C to stop RAY cleanly.")
+    print("=" * 66 + "\n")
+    if server.exposed:
+        print("  NOTE: the interface is bound beyond localhost. Anyone who can reach this")
+        print("        machine on the network can use it. Keep it on 127.0.0.1 normally.\n")
+
+    use_desktop = args.desktop or (
+        not (args.browser or args.headless or args.no_open) and sys.platform.startswith("win")
+    )
+
+    def shutdown(*_args) -> None:
+        try:
+            server.stop()
+        finally:
+            app.stop()
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, shutdown)
+    try:
+        signal.signal(signal.SIGTERM, shutdown)
+    except (AttributeError, ValueError):  # pragma: no cover - Windows quirks
+        pass
+
+    opened = False
+    if use_desktop:
+        from ray.desktop.shell import DesktopUnavailable, run_desktop
+
+        try:
+            opened = True
+            code = run_desktop(url, app_name="RAY")
+            server.stop()
+            app.stop()
+            return code
+        except DesktopUnavailable as exc:
+            print(f"[desktop] {exc}")
+            print("[desktop] Falling back to your browser.\n")
+
+    if not opened and not args.no_open and not args.headless:
+        import webbrowser
+
+        threading.Thread(
+            target=lambda: (time.sleep(0.6), webbrowser.open(url)), name="ray-browser", daemon=True
+        ).start()
 
     try:
-        response = client.chat.completions.create(
-            model=PRIMARY_MODEL,
-            messages=messages,
-            max_tokens=400,
-            temperature=0.7,
-        )
-        reply = response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        reply = "Sorry, something went wrong. Try again in a moment."
-
-    conversation_history.append({"role": "assistant", "content": reply})
-    await update.message.reply_text(reply)
-
-
-def main():
-    if not TELEGRAM_TOKEN or not OPENROUTER_API_KEY:
-        print("Missing TELEGRAM_TOKEN or OPENROUTER_API_KEY")
-        return
-
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("Bot is running...")
-    app.run_polling()
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
