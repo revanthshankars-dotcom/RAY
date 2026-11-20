@@ -317,3 +317,28 @@ def test_app_home_and_config_are_owner_only(app):
     assert stat.S_IMODE(os.stat(app.paths.data).st_mode) == 0o700
     assert stat.S_IMODE(os.stat(app.paths.logs).st_mode) == 0o700
     assert stat.S_IMODE(os.stat(app.paths.config_path).st_mode) == 0o600
+
+
+# ------------------------------------------------------------ starting up cold
+def test_missing_dependency_prints_a_fix_instead_of_a_traceback(capsys):
+    """A missing package must tell the user the command, not dump a stack."""
+    import main
+
+    error = ModuleNotFoundError("No module named 'httpx'", name="httpx")
+    assert main._missing_dependencies(error) == 2
+    out = capsys.readouterr().out
+    assert "httpx" in out
+    assert "-m pip install -r requirements.txt" in out
+    assert "python main.py --check" in out
+
+
+def test_a_real_import_error_is_not_swallowed(capsys):
+    """Only RAY's own dependencies get the friendly path."""
+    import pytest
+
+    import main
+
+    error = ModuleNotFoundError("No module named 'some_other_pkg'", name="some_other_pkg")
+    with pytest.raises(ModuleNotFoundError):
+        main._missing_dependencies(error)
+    assert capsys.readouterr().out == ""

@@ -114,7 +114,7 @@ Checks in the codespace terminal:
 
 ```bash
 python main.py --check     # python, packages, data home, which providers are configured
-python -m pytest -q        # 264 tests, offline
+python -m pytest -q        # 266 tests, offline
 ```
 
 **What a Linux codespace can and cannot do.** It can plan, chat, research, read
@@ -307,6 +307,7 @@ that is what OpenRouter and Gemini are for. RAY says so instead of guessing.
 
 | Symptom | Fix |
 |---|---|
+| `ModuleNotFoundError: No module named 'httpx'` (or psutil/cryptography/pypdf) | the dependencies were never installed in the interpreter you are running. Run `python3 -m pip install -r requirements.txt`. In a Codespace the devcontainer normally does this itself — if it did not, rebuild the container, or just run that command in the terminal. `python3 main.py` now prints this instruction instead of a traceback. |
 | `address already in use` | `python main.py --port 8766`, or stop the other instance |
 | "I can't reach an AI provider" | no key configured: Settings → AI providers, or set `RAY_GEMINI_API_KEY` |
 | Chat works, multi-step commands don't | the planner needs an engine that can call tools — check **Settings → AI providers → Engines** |

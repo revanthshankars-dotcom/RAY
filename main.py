@@ -101,13 +101,43 @@ def environment_report(home: str | None) -> int:
     return 0
 
 
+REQUIRED_MODULES = {
+    "httpx": "httpx",
+    "psutil": "psutil",
+    "cryptography": "cryptography",
+    "pypdf": "pypdf",
+}
+
+
+def _missing_dependencies(error: ModuleNotFoundError) -> int:
+    """A missing package is a setup step, not a traceback."""
+    missing = str(getattr(error, "name", "") or "").split(".")[0]
+    if missing and missing not in REQUIRED_MODULES:
+        # Not one of ours: let the real error through, unedited.
+        raise error
+    packages = sorted(REQUIRED_MODULES.values())
+    print(f"RAY cannot start: the Python package '{missing}' is not installed.\n")
+    print("Install RAY's dependencies, then run it again:\n")
+    print(f"    {sys.executable} -m pip install -r requirements.txt\n")
+    print("Or install them one by one:")
+    print(f"    {sys.executable} -m pip install {' '.join(packages)}\n")
+    print(f"This is Python: {sys.executable}")
+    print("If you are in a GitHub Codespace, the devcontainer should have done this")
+    print("already - rebuild the container, or run the command above in its terminal.")
+    print("Check what is installed at any time with:  python main.py --check")
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
     if args.check:
         return environment_report(args.home)
 
-    from ray.app import RayApp
-    from ray.server.app import create_server, find_free_port
+    try:
+        from ray.app import RayApp
+        from ray.server.app import create_server, find_free_port
+    except ModuleNotFoundError as exc:
+        return _missing_dependencies(exc)
 
     app = RayApp(home=args.home, log_level=args.log_level)
     host = args.host or str(app.config.get("ui.host", "127.0.0.1"))

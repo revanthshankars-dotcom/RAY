@@ -35,7 +35,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 264 tests,
+Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 266 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -44,7 +44,7 @@ Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 264 tests,
 
 ```
 $ python -m pytest
-264 passed in 29.0s
+266 passed in 29.0s
 ```
 
 | Test file | Tests | Focus |
