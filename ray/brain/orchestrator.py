@@ -507,6 +507,54 @@ def _describe_outcome(outcome: dict[str, Any]) -> str:
         return f"Backup written to {data.get('archive')} ({data.get('size_human')}){suffix}"
     if tool == "plan_downloads_organisation" and isinstance(data, dict):
         return f"I can tidy {data.get('total', 0)} file(s) in Downloads. Review the plan before applying it."
+    if tool == "list_processes" and isinstance(data, list):
+        if not data:
+            return "No processes were reported."
+        top = sorted(data, key=lambda row: float(row.get("cpu_percent") or 0), reverse=True)[:6]
+        return "Busiest right now:\n" + "\n".join(
+            f"• {row.get('name')} — {float(row.get('cpu_percent') or 0):.0f}% CPU, "
+            f"{float(row.get('memory_mb') or 0):.0f} MB"
+            for row in top
+        )
+    if tool == "list_running_apps" and isinstance(data, list):
+        if not data:
+            return "Nothing else is running."
+        return "Open right now: " + ", ".join(
+            f"{row.get('name')} ({float(row.get('memory_mb') or 0):.0f} MB)" for row in data[:8]
+        )
+    if tool == "index_status" and isinstance(data, dict):
+        last = str(data.get("last_indexed") or "")[:16].replace("T", " ") or "never"
+        return (
+            f"Index: {data.get('files', 0)} file(s), {data.get('size_human', '0 B')}, "
+            f"last indexed {last}."
+        )
+    if tool == "list_bookmarks" and isinstance(data, list):
+        if not data:
+            return "No bookmarks saved yet."
+        return "Bookmarks: " + "; ".join(str(row.get("title") or row.get("url")) for row in data[:8])
+    if tool == "recall_memory" and isinstance(data, list):
+        if not data:
+            return "I don't have anything stored about that yet."
+        return "I remember: " + "; ".join(
+            str(row.get("content") or row.get("title")) for row in data[:6]
+        )
+    if tool == "clipboard_get" and isinstance(data, dict):
+        text = str(data.get("text") or "").strip()
+        return f"Clipboard: {text[:500]}" if text else "The clipboard is empty."
+    if tool == "close_application" and isinstance(data, dict):
+        return f"Closed {data.get('closed') or data.get('name') or 'the application'}{suffix}"
+    if tool == "open_known_folder" and isinstance(data, dict):
+        return f"Opened {data.get('opened') or data.get('folder')}{suffix}"
+    if tool == "open_file_by_name" and isinstance(data, dict):
+        return f"Opened {data.get('opened') or data.get('name')}{suffix}"
+    if tool in {"open_url", "open_path"} and isinstance(data, dict):
+        return f"Opened {data.get('opened') or data.get('url')}{suffix}"
+    if tool == "start_focus" and isinstance(data, dict):
+        return f"Focus session started for {data.get('minutes', 25)} minutes."
+    if tool == "type_text" and isinstance(data, dict):
+        return "Typed that into the active window."
+    if tool == "press_hotkey" and isinstance(data, dict):
+        return f"Pressed {'+'.join(str(key) for key in (data.get('keys') or [])) or 'the keys'}."
     if tool == "remember":
         return "I'll remember that."
     if tool == "play_media" and isinstance(data, dict):

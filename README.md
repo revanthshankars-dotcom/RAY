@@ -25,17 +25,33 @@ automation — through a validated command layer instead of pretending.
 
 ---
 
-## Quick start (Windows)
+## Quick start
+
+**Nothing to download by hand — the code stays in Git.** Full instructions (live
+preview, GitHub Codespaces, Windows, Linux VPS, API keys, troubleshooting) are in
+[`SETUP.md`](SETUP.md).
+
+Windows, one clone and one installer:
 
 ```bat
-git clone <this repo> RAY
-cd RAY
+git clone https://github.com/revanthshankars-dotcom/RAY.git "%LOCALAPPDATA%\RAY-app"
+cd "%LOCALAPPDATA%\RAY-app"
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -WithDesktop -WithAutomation
 .venv\Scripts\python.exe main.py --check
 .venv\Scripts\python.exe main.py
 ```
 
-Or double-click **RAY.bat** (it uses `.venv` automatically if present).
+Or double-click **RAY.bat** (it uses `.venv` automatically if present). Updates
+are `git pull`; your data lives in `%LOCALAPPDATA%\RAY` and is untouched.
+
+Browser only (no local install): open the repo in **GitHub Codespaces** — the
+included `.devcontainer` installs everything — then
+
+```bash
+RAY_ALLOW_REMOTE_ORIGIN=1 python3 main.py --headless --host 0.0.0.0 --port 8765 --no-open
+```
+
+and open the forwarded port 8765.
 
 `--check` prints your Python version, which optional packages are present, the
 data folder, and whether the native window is available.
@@ -68,7 +84,10 @@ logs/            rotating, redacted logs
 
 ## First run: connect your AI providers
 
-Open **Settings → AI providers**. Keys are encrypted with a local Fernet key and
+Either paste keys under **Settings → AI providers** in the running app, or export
+`RAY_GEMINI_API_KEY` / `RAY_CURSOR_API_KEY` / `RAY_FISH_API_KEY` before you start
+it — see [`SETUP.md`](SETUP.md#giving-the-agents-their-api-keys) for the exact
+steps per provider. Keys are encrypted with a local Fernet key and
 never appear in the interface, logs or `config.json`.
 
 | Provider | Role | Setup | Default model |
@@ -113,6 +132,22 @@ monitoring and automation all work; chat and speech say plainly that a provider
 is not configured.
 
 ---
+
+## Plain English, offline
+
+RAY understands direct commands without any model: "open chrome", "go to
+youtube", "open bluetooth settings", "set volume to 30", "take a screenshot",
+"find my tax pdf", "search my files for invoice", "make a folder called invoices
+in documents", "remind me in 20 minutes to stretch", "add a task to buy milk",
+"how many tasks do I have", "schedule a meeting tomorrow at 4pm", "how much ram
+am i using", "what's using my cpu", "index my documents", "start a focus session
+for 25 minutes", "remember that I prefer dark mode", "what do you remember about
+me", "read my clipboard", "type hello world", "press ctrl+s", "close notepad".
+
+Say **"help"** in the app for the live list, and "turn off wifi" or "send an
+email" to see RAY state plainly what it will not do. Anything longer — planning
+several steps, comparing sources, writing prose — is routed to Gemini or Cursor.
+See [`SETUP.md`](SETUP.md#plain-english-commands-no-provider-required).
 
 ## What each section does
 
@@ -222,6 +257,7 @@ and budget limits. Approval-gated steps pause and show **Approve / Deny**.
 ```
 main.py                  launcher, environment check, desktop/browser/headless modes
 RAY.bat                  Windows double-click launcher
+SETUP.md                 run it from Git (preview, Codespaces, Windows, VPS) + API keys
 SECURITY.md              one security clause per area (the normative rule set)
 SECURITY_AUDIT.md        leakage review, findings, breach scenarios, accepted risks
 ray/
@@ -242,14 +278,14 @@ ray/
   ui/          HTML/CSS/JS interface (no build step)
   desktop/     optional PySide6 window with tray icon
 scripts/       install.ps1, ui_smoke.mjs
-tests/         pytest suite (212 tests)
+tests/         pytest suite (252 tests)
 ```
 
 ## Testing
 
 ```bash
 pip install pytest
-python -m pytest                     # 212 tests, offline, no keys needed
+python -m pytest                     # 252 tests, offline, no keys needed
 ```
 
 The suite covers the database, credential vault, the hardening regressions

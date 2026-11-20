@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..agents.registry import AgentRegistry
 from ..ai.base import ChatMessage, ProviderError
 from ..core.logging_setup import get_logger
 from ..tools.registry import ToolRegistry
@@ -68,7 +69,7 @@ INTENT_PLANS: dict[str, tuple[str, str, str]] = {
     "open_app": ("open_application", "computer", "Open the requested application"),
     "open_folder": ("open_known_folder", "files", "Open the requested folder"),
     "open_file": ("open_file_by_name", "files", "Find and open the requested file"),
-    "open_url": ("open_url", "browser", "Open the address in the browser"),
+    "open_url": ("open_url", "research", "Open the address in the browser"),
     "search_files": ("search_files", "files", "Search local files"),
     "create_folder": ("create_folder_by_name", "files", "Create a new folder"),
     "plan_organisation": ("plan_downloads_organisation", "files", "Plan a tidy-up of Downloads"),
@@ -91,6 +92,28 @@ INTENT_PLANS: dict[str, tuple[str, str, str]] = {
     "list_tasks": ("list_tasks", "productivity", "Read the task list"),
     "list_reminders": ("list_reminders", "productivity", "Read reminders"),
     "list_schedule": ("list_schedule", "productivity", "Read the calendar"),
+    "close_app": ("close_application", "computer", "Close the requested application"),
+    "open_panel": ("open_system_panel", "computer", "Open the settings page"),
+    "clipboard_get": ("clipboard_get", "computer", "Read the clipboard"),
+    "clipboard_set": ("clipboard_set", "computer", "Put text on the clipboard"),
+    "type_text": ("type_text", "computer", "Type into the active window"),
+    "press_hotkey": ("press_hotkey", "computer", "Press a keyboard shortcut"),
+    "index_files": ("index_files", "files", "Index the chosen folders"),
+    "index_status": ("index_status", "files", "Report the index state"),
+    "list_processes": ("list_processes", "system", "Read the busiest processes"),
+    "list_running_apps": ("list_running_apps", "computer", "List the open applications"),
+    "start_focus": ("start_focus", "productivity", "Start a focus session"),
+    "recall": ("recall_memory", "assistant", "Search long-term memory"),
+    "research": ("research", "research", "Research the question with sources"),
+    "list_bookmarks": ("list_bookmarks", "research", "Read saved bookmarks"),
+}
+
+# Intents that answer in words instead of running a tool.
+ANSWER_INTENTS = {"capabilities", "smalltalk", "explain"}
+
+# Local intents use friendly argument names; tools use their own schema.
+ARG_ALIASES: dict[str, dict[str, str]] = {
+    "open_app": {"app": "target"},
 }
 
 POWER_TOOLS = {"lock": "power_action", "sleep": "power_action", "restart": "power_action", "shutdown": "power_action"}
@@ -127,10 +150,20 @@ class Planner:
             return Plan(goal="", answer="I did not catch a request.")
         local = self.plan_local(text)
         if local is not None:
-            if agent:
+            # The agent a caller asks for is a hint, not a cage: typing "open
+            # chrome" while the System tab is selected must still open Chrome.
+            if agent and self._agent_can_run(agent, local):
                 local.agent = agent
             return local
         return self.plan_with_ai(text, agent=agent, history=history)
+
+    @staticmethod
+    def _agent_can_run(agent: str, plan: Plan) -> bool:
+        registry = AgentRegistry()
+        spec = registry.agents.get(agent)
+        if spec is None:
+            return False
+        return all(spec.allows(step.tool) for step in plan.steps)
 
     # ------------------------------------------------------------ local layer
     def plan_local(self, text: str) -> Plan | None:
@@ -150,6 +183,12 @@ class Planner:
             )
         if intent.kind == "backup_prompt":
             return Plan(goal="clarify backup target", answer=intent.speak, source="local", confidence=0.6)
+        if intent.kind in ANSWER_INTENTS:
+            answer = str(intent.args.get("answer") or intent.speak)
+            return Plan(
+                goal=intent.kind, answer=answer, speak=intent.speak,
+                source="local", confidence=intent.confidence, notes=intent.evidence,
+            )
 
         if intent.kind.startswith("power_"):
             action = intent.args.get("action", intent.kind.split("_", 1)[1])
@@ -167,7 +206,19 @@ class Planner:
         if tool not in self.tools:
             log.warning("intent '%s' maps to missing tool '%s'", intent.kind, tool)
             return None
-        step = PlanStep(tool, {k: v for k, v in intent.args.items() if v is not None}, reason)
+        aliases = ARG_ALIASES.get(intent.kind, {})
+        args = {
+            aliases.get(key, key): value
+            for key, value in intent.args.items()
+            if value is not None
+        }
+        required = (self.tools.get(tool).parameters or {}).get("required", []) if self.tools.get(tool) else []
+        missing = [name for name in required if name not in args]
+        if missing:
+            # A parser/tool schema mismatch is a bug, not something to guess at.
+            log.warning("intent '%s' is missing %s for tool '%s'", intent.kind, missing, tool)
+            return None
+        step = PlanStep(tool, args, reason)
         return Plan(
             goal=reason,
             steps=[step],
@@ -292,7 +343,8 @@ class Planner:
             "I can still do the local things: open apps and folders, find and organise files, "
             "take notes, manage tasks, reminders and your calendar, check system health, take "
             "screenshots and run automations. Just phrase it directly, for example "
-            "\"open my documents folder\" or \"remind me to call home at 7pm\"."
+            "\"open my documents folder\" or \"remind me to call home at 7pm\". "
+            "Say \"help\" to see everything I understand."
         )
 
 

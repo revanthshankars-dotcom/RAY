@@ -21,7 +21,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | Permission levels, approval queue, emergency stop, audit log | **Complete, tested** | 14 security tests + API approval round-trip |
 | 80-tool validated command layer | **Complete, tested** | tool catalogue test, approval tests, capability probes |
 | Cursor CLI + Gemini + Grok (opt-in) + Fish Audio providers, routing, retries, budgets, cache, usage | **Complete; request/response tested with injected HTTP and a stub CLI** | `tests/test_ai.py` |
-| Intent parser + planner + orchestrator (progress, cancel, resume, step limits, conversational fallback) | **Complete, tested** | `tests/test_brain.py` (33) |
+| Intent parser + planner + orchestrator: 32 plain-English phrasings offline (apps, sites, panels, clipboard, typing, focus, index, system/process questions, help, honest limits), progress, cancel, resume, step limits | **Complete, tested** | `tests/test_brain.py` (73) |
 | 12 agents with tool remits, run log | **Complete, tested** | agent selection + `agent_runs` assertions |
 | Files: browse/search/open/rename/copy/move, quarantine+restore, verified zip backups, duplicates, organiser | **Complete, tested** | `tests/test_computer.py` |
 | Productivity: tasks, notes, reminders, calendar, focus sessions, habits | **Complete, tested** | `tests/test_productivity.py` (14) |
@@ -35,7 +35,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 212 tests,
+Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 252 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -44,13 +44,13 @@ Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 212 tests,
 
 ```
 $ python -m pytest
-212 passed in 25.0s
+252 passed in 27.0s
 ```
 
 | Test file | Tests | Focus |
 | --- | --- | --- |
 | `test_api.py` | 34 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
-| `test_brain.py` | 33 | intent patterns, time parsing, plans, step caps, approvals, cancel, resume |
+| `test_brain.py` | 73 | plain-English intents (32 phrasings), planner/tool schema agreement, agent hints, time parsing, plans, step caps, approvals, cancel, resume |
 | `test_ai.py` | 39 | Cursor CLI parsing/timeout/auth, Grok/Gemini/Fish parsing, tool calls, error mapping, routing fallback, budget, cache |
 | `test_memory_knowledge.py` | 19 | memory CRUD/export/prune/secrets, OOXML extraction, FTS search, excludes |
 | `test_computer.py` | 18 | files (quarantine round-trip, backups, protected paths), metrics, shell safety |

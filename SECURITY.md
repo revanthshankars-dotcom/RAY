@@ -146,7 +146,7 @@ summarise it") is a working exfiltration chain.
 `SENSITIVE_SUFFIXES`, `sensitive_reason`, `_guard_read`, `read_text`.
 
 **Verify.** Ask RAY to read `~/.ssh/id_rsa`: it refuses with an explanation and
-points at Settings → Connections. Security Center → *Credential file reads*.
+points at Settings → AI providers. Security Center → *Credential file reads*.
 
 ---
 
@@ -467,7 +467,7 @@ instead of fabricated numbers.
 
 **Rule.** On a suspected compromise the operator MUST be able to: release the
 emergency stop *after* reviewing approvals, export the audit log, rotate keys in
-Settings → Connections (which must invalidate the old value), delete memories
+Settings → AI providers (which must invalidate the old value), delete memories
 and quarantine, and wipe the data folder. Findings MUST be written to
 `SECURITY_AUDIT.md` before they are fixed, and no clause may be relaxed without
 an entry there.

@@ -260,3 +260,124 @@ def test_conversational_fallback_keeps_offline_notice_when_chat_fails(app, monke
 
     monkeypatch.setattr(app.orchestrator, "_chat_result", explode)
     assert app.orchestrator.handle("tell me a joke").answer == "offline notice"
+
+
+# ------------------------------------------------------- plain English commands
+PLAIN_ENGLISH = [
+    ("open chrome", "open_app", {"app": "chrome"}),
+    ("open youtube", "open_url", {"url": "https://www.youtube.com"}),
+    ("go to gmail", "open_url", {"url": "https://mail.google.com"}),
+    ("open github.com", "open_url", {"url": "https://github.com"}),
+    ("what's my cpu usage", "system_report", {}),
+    ("how much ram am i using", "system_report", {}),
+    ("how much disk space is left", "system_report", {}),
+    ("what is using my cpu", "list_processes", {"sort_by": "cpu"}),
+    ("show processes", "list_processes", {}),
+    ("capture my screen", "screenshot", {}),
+    ("set volume to 40", "set_volume", {"percent": 40}),
+    ("make it louder", "volume", {"direction": "up"}),
+    ("lock my pc", "power_lock", {"action": "lock"}),
+    ("close chrome", "close_app", {"name": "chrome"}),
+    ("open bluetooth settings", "open_panel", {"panel": "bluetooth"}),
+    ("read my clipboard", "clipboard_get", {}),
+    ("copy hello world to my clipboard", "clipboard_set", {"text": "hello world"}),
+    ("type hello world", "type_text", {"text": "hello world"}),
+    ("press ctrl+s", "press_hotkey", {"keys": ["ctrl", "s"]}),
+    ("index status", "index_status", {}),
+    ("start a focus session for 25 minutes", "start_focus", {"minutes": 25}),
+    ("what do you remember about me", "recall", {}),
+    ("research cheap SSDs", "research", {}),
+    ("show my bookmarks", "list_bookmarks", {}),
+    ("search my files for invoice", "search_files", {"query": "invoice"}),
+    ("how many tasks do I have", "list_tasks", {}),
+    ("help", "capabilities", {}),
+    ("what can you do", "capabilities", {}),
+    ("hello", "smalltalk", {}),
+    ("who are you", "smalltalk", {}),
+    ("turn off wifi", "explain", {}),
+    ("empty the trash", "explain", {}),
+]
+
+
+@pytest.mark.parametrize("text,expected_kind,expected_args", PLAIN_ENGLISH)
+def test_plain_english_maps_to_the_right_intent(parser, text, expected_kind, expected_args):
+    kind, args = kinds(text, parser)
+    assert kind == expected_kind, f"{text!r} -> {kind}"
+    for key, value in expected_args.items():
+        assert args.get(key) == value, f"{text!r}: {key}={args.get(key)!r}"
+
+
+def test_reminder_title_drops_the_time_phrase(parser):
+    kind, args = kinds("remind me in 20 minutes to stretch", parser)
+    assert kind == "create_reminder"
+    assert args["title"].lower() == "stretch"
+    assert args["due_at"]
+
+    kind, args = kinds("remind me at 7pm to call mom", parser)
+    assert args["title"].lower() == "call mom"
+
+
+def test_task_title_drops_the_leading_to(parser):
+    assert kinds("add a task to buy milk", parser)[1]["title"] == "buy milk"
+
+
+def test_event_title_reads_naturally(parser):
+    kind, args = kinds("add a meeting with team on friday at 10", parser)
+    assert kind == "create_event"
+    assert args["title"].lower() == "meeting with team"
+
+
+def test_every_local_intent_points_at_a_real_tool_and_agent(app):
+    """The parser and the tool schema must not drift apart."""
+    from ray.brain.planner import INTENT_PLANS
+
+    for kind, (tool, agent, _why) in INTENT_PLANS.items():
+        assert agent in app.orchestrator.agents.agents, f"{kind}: unknown agent {agent}"
+        assert tool in app.tools, f"{kind}: unknown tool {tool}"
+
+
+def test_local_plans_satisfy_the_tool_schema(app):
+    """A plan that misses a required argument fails at run time; catch it here."""
+    from ray.brain.planner import ANSWER_INTENTS, ARG_ALIASES, INTENT_PLANS
+
+    checked = 0
+    for text, _kind, _args in PLAIN_ENGLISH:
+        plan = app.planner.plan_local(text)
+        if plan is None or not plan.steps:
+            continue
+        for step in plan.steps:
+            tool = app.tools.get(step.tool)
+            assert tool is not None, step.tool
+            required = (tool.parameters or {}).get("required", [])
+            missing = [name for name in required if name not in step.args]
+            assert not missing, f"{text!r} -> {step.tool} missing {missing}"
+            checked += 1
+    assert checked >= 15  # the sample really exercised the tool plans
+
+
+def test_offline_english_commands_need_no_provider(app):
+    """No keys: a greeting and a system question still get a real answer."""
+    greeting = app.orchestrator.handle("hello")
+    assert greeting.status == "answered"
+    assert "ray" in greeting.answer.lower()
+    assert "provider" not in greeting.answer.lower()
+
+    report = app.orchestrator.handle("how much ram am i using")
+    assert report.status == "completed"
+    assert report.plan["steps"][0]["tool"] == "system_report"
+    assert "RAM" in report.answer or "memory" in report.answer.lower()
+
+
+def test_unknown_request_still_explains_what_is_possible(app):
+    result = app.orchestrator.handle("compose a sonnet about the monsoon")
+    assert "local things" in result.answer or "provider" in result.answer.lower()
+
+
+def test_agent_tab_is_a_hint_not_a_cage(app):
+    """A plain command typed in the wrong tab must still run."""
+    result = app.orchestrator.handle("system report", agent="productivity")
+    assert result.agent == "system"
+    assert result.status == "completed"
+
+    honored = app.orchestrator.handle("how much ram am i using", agent="system")
+    assert honored.agent == "system"

@@ -119,7 +119,7 @@ level-1 tool whose output goes to a cloud model.
 
 *Fix:* `sensitive_reason()` + `_guard_read()` refuse credential stores, dotenv
 files, private keys/certificates/keystores, browser profiles, and RAY's own vault
-key and database, with a message that points at Settings → Connections. The
+key and database, with a message that points at Settings → AI providers. The
 opt-in (`permissions.allow_sensitive_reads`) is surfaced as a scan warning.
 
 ### F-03 — Interpreter inline code (High)

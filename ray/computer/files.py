@@ -154,7 +154,7 @@ class FileManager:
         if reason:
             raise PermissionError(
                 f"RAY will not read {path.name}: {reason}. "
-                "Store keys in Settings > Connections (encrypted), or enable "
+                "Store keys in Settings > AI providers (encrypted), or enable "
                 "permissions.allow_sensitive_reads if you really need this file."
             )
         if self.is_protected(path):
