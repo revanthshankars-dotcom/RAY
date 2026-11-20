@@ -10,12 +10,14 @@ still be usable offline.
 
 from __future__ import annotations
 
+import hmac
 import json
 import mimetypes
 import os
 import re
 import socket
 import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +33,12 @@ log = get_logger("server")
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 MAX_BODY = 2 * 1024 * 1024
+# Requests per minute per client address.  The UI polls events, so this is
+# generous for one browser and still stops a runaway script from pinning the CPU.
+DEFAULT_RATE_LIMIT = 900
+_RATE_LOCK = threading.Lock()
+_RATE_HITS: dict[str, list[float]] = {}
+_RATE_WINDOW = 60.0
 
 
 class RayServer:
@@ -131,6 +139,48 @@ def _make_handler(app):
         def _error(self, message: str, status: int = 400) -> None:
             self._json({"ok": False, "error": message}, status)
 
+        # ------------------------------------------------------------------ guard
+        def _api_token(self) -> str:
+            token = os.environ.get("RAY_API_TOKEN", "").strip()
+            if token:
+                return token
+            try:
+                return str(app.config.get("ui.api_token", "") or "").strip()
+            except Exception:  # pragma: no cover - config must never break requests
+                return ""
+
+        def _token_ok(self) -> bool:
+            token = self._api_token()
+            if not token:
+                return True  # opt-in: default stays frictionless on loopback
+            supplied = (self.headers.get("X-RAY-Token") or "").strip()
+            if not supplied:
+                auth = (self.headers.get("Authorization") or "").strip()
+                if auth.lower().startswith("bearer "):
+                    supplied = auth[7:].strip()
+            return bool(supplied) and hmac.compare_digest(supplied, token)
+
+        def _rate_ok(self) -> bool:
+            try:
+                limit = int(app.config.get("ui.rate_limit_per_minute", DEFAULT_RATE_LIMIT))
+            except Exception:  # pragma: no cover
+                limit = DEFAULT_RATE_LIMIT
+            if limit <= 0:
+                return True
+            client = self.client_address[0] if self.client_address else "?"
+            now = time.monotonic()
+            with _RATE_LOCK:
+                hits = [stamp for stamp in _RATE_HITS.get(client, []) if now - stamp < _RATE_WINDOW]
+                if len(hits) >= limit:
+                    _RATE_HITS[client] = hits
+                    return False
+                hits.append(now)
+                _RATE_HITS[client] = hits
+                if len(_RATE_HITS) > 64:  # bound memory on a long-lived server
+                    for key in [k for k, v in _RATE_HITS.items() if not v][:32]:
+                        _RATE_HITS.pop(key, None)
+            return True
+
         def _body(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0:
@@ -203,11 +253,19 @@ def _make_handler(app):
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             try:
+                if not self._rate_ok():
+                    self._error("too many requests - wait a moment and retry", 429)
+                    return
                 if method in ("POST", "PATCH", "DELETE") and not self._origin_ok():
                     self._error("cross-origin requests are not allowed", 403)
                     return
                 if not path.startswith("/api/"):
+                    # The page itself must load before it can replay the token it
+                    # is given; static assets are public, the API is not.
                     self._serve_static(path)
+                    return
+                if not self._token_ok():
+                    self._error("missing or invalid API token", 401)
                     return
                 route = ROUTES.get((method, path)) or ROUTES.get(("*", path))
                 if route is None:
@@ -243,18 +301,23 @@ def _make_handler(app):
             except (ValueError, KeyError) as exc:
                 self._error(str(exc).strip("'\""), 400)
             except Exception as exc:
-                log.error("API error on %s %s: %s", method, path, exc)
+                incident = f"inc-{int(time.time())}-{os.urandom(3).hex()}"
+                # The detail goes to the local log (already redacted); the client
+                # only receives a correlation id, so internal paths, SQL and file
+                # names never leak through an error body or a shared screenshot.
+                log.error("API error [%s] on %s %s: %s", incident, method, path, exc)
                 log.debug("%s", traceback.format_exc())
-                self._error(f"{exc.__class__.__name__}: {exc}", 500)
+                self._error(f"internal error (reference {incident})", 500)
 
         # --------------------------------------------------------------- static
         def _serve_static(self, path: str) -> None:
             relative = path.lstrip("/") or "index.html"
             if relative.endswith("/"):
                 relative += "index.html"
-            candidate = (UI_DIR / relative).resolve()
-            if not str(candidate).startswith(str(UI_DIR.resolve())) or not candidate.exists() or candidate.is_dir():
-                candidate = UI_DIR / "index.html"
+            root = UI_DIR.resolve()
+            candidate = (root / relative).resolve()
+            if not candidate.is_relative_to(root) or not candidate.exists() or candidate.is_dir():
+                candidate = root / "index.html"
             if not candidate.exists():
                 self._send(404, b"RAY UI files are missing", "text/plain; charset=utf-8")
                 return
@@ -264,6 +327,15 @@ def _make_handler(app):
             if candidate.suffix == ".css":
                 content_type = "text/css; charset=utf-8"
             body = candidate.read_bytes()
+            if candidate.name == "index.html":
+                token = self._api_token()
+                if token:
+                    # The UI reads this meta tag and replays the token on every
+                    # request; it is only ever served to a page from this origin.
+                    from html import escape as _escape
+
+                    meta = f'<meta name="ray-token" content="{_escape(token, quote=True)}">'.encode("utf-8")
+                    body = body.replace(b"<head>", b"<head>" + meta, 1)
             self._send(200, body, content_type, {"Cache-Control": "no-cache"})
 
     return Handler
@@ -828,6 +900,34 @@ def security_scan(app, **_: Any) -> Any:
     except Exception as exc:  # pragma: no cover - defensive
         check("Credential vault", False, str(exc))
 
+    try:
+        from ..browser.search import UnsafeTarget, check_fetch_target
+
+        try:
+            check_fetch_target("http://127.0.0.1/")
+            blocked = False
+        except UnsafeTarget:
+            blocked = True
+        private_ok = bool(app.config.get("browser.allow_private_addresses", False))
+        check(
+            "Web fetch guard",
+            blocked,
+            "loopback, LAN and cloud-metadata addresses are refused"
+            if not private_ok else "private-address fetching is enabled on purpose",
+            warn=private_ok,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        check("Web fetch guard", False, str(exc))
+
+    sensitive = bool(app.config.get("permissions.allow_sensitive_reads", False))
+    check(
+        "Credential file reads",
+        not sensitive,
+        "key stores, .env files and browser profiles are refused"
+        if not sensitive else "sensitive reads are enabled - files can reach a model",
+        warn=sensitive,
+    )
+
     exposed = bool(_CURRENT.get("exposed"))
     allow_remote = str(os.environ.get("RAY_ALLOW_REMOTE_ORIGIN", "")).strip().lower() in ("1", "true", "yes", "on")
     if not exposed:
@@ -845,6 +945,33 @@ def security_scan(app, **_: Any) -> Any:
             False,
             "reachable on your network without an opt-in - point ui.host back at 127.0.0.1",
         )
+
+    token = str(app.config.get("ui.api_token", "") or "").strip() or os.environ.get("RAY_API_TOKEN", "").strip()
+    if token:
+        check("API access", True, "a token is required on every request")
+    elif not exposed:
+        check("API access", True, "no token required - the API is loopback only")
+    else:
+        check(
+            "API access",
+            True,
+            "reachable on the network without a token - set RAY_API_TOKEN or bind to 127.0.0.1",
+            warn=True,
+        )
+
+    if os.name == "nt":
+        check("Data permissions", True, "Windows ACLs protect %LOCALAPPDATA%\\RAY")
+    else:
+        try:
+            mode = os.stat(app.paths.data).st_mode & 0o777
+            check(
+                "Data permissions",
+                mode == 0o700,
+                f"{app.paths.data} is {oct(mode)} (owner-only)" if mode == 0o700
+                else f"{app.paths.data} is {oct(mode)} - other local users can read it",
+            )
+        except OSError as exc:  # pragma: no cover - defensive
+            check("Data permissions", False, str(exc))
 
     stats = app.audit.stats()
     check(

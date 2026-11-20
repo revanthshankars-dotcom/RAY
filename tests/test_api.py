@@ -106,7 +106,7 @@ def test_tools_listing_and_call(client):
 
 def test_unknown_route_returns_json_404(client):
     with pytest.raises(urllib.error.HTTPError) as excinfo:
-        client.get("/api/does-not-exist")
+        urllib.request.urlopen(f"{client.base}/api/does-not-exist", timeout=10)
     assert excinfo.value.code == 404
     payload = json.loads(excinfo.value.read())
     assert payload["ok"] is False

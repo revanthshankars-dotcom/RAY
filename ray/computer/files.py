@@ -55,10 +55,35 @@ ORGANISE_PLAN: dict[str, list[str]] = {
 }
 
 
+# Files whose *contents* must not be pulled into RAY (and therefore not into a
+# cloud model, a note, a log line or a screenshot).  Reading is refused unless
+# the user turns on ``permissions.allow_sensitive_reads``.
+SENSITIVE_DIRS = {
+    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".password-store",
+    ".config/gcloud", "gcloud", "microsoft/credentials", "microsoft/crypto",
+    "google/chrome/user data", "mozilla/firefox", "bravesoftware",
+}
+SENSITIVE_NAMES = {
+    ".netrc", ".git-credentials", ".pgpass", ".npmrc", ".pypirc", ".htpasswd",
+    "credentials", "credentials.json", "secrets.json", "secret.key", "ray.db",
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa.pub", "authorized_keys",
+    "login data", "logins.json", "key4.db", "key3.db", "cookies", "cookies.sqlite",
+    "web data", "places.sqlite", "wallet.dat", "keyring", "master.key",
+}
+SENSITIVE_SUFFIXES = {".pem", ".key", ".pfx", ".p12", ".kdbx", ".keystore", ".jks", ".ppk", ".ovpn"}
+SENSITIVE_PREFIXES = (".env",)
+
+
 class FileManager:
-    def __init__(self, quarantine_dir: Path | str | None = None, downloads_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        quarantine_dir: Path | str | None = None,
+        downloads_dir: Path | None = None,
+        allow_sensitive_reads: bool = False,
+    ) -> None:
         self.quarantine_dir = Path(quarantine_dir) if quarantine_dir else Path.home() / "RAY-quarantine"
         self.downloads_dir = downloads_dir or Path.home() / "Downloads"
+        self.allow_sensitive_reads = allow_sensitive_reads
 
     # ----------------------------------------------------------------- safety
     @staticmethod
@@ -101,6 +126,42 @@ class FileManager:
             except (OSError, ValueError):
                 continue
         return False
+
+    @staticmethod
+    def sensitive_reason(path: Path) -> str | None:
+        """Why *path* is a credential store (or None when it is ordinary)."""
+        try:
+            target = Path(path).resolve()
+        except OSError:
+            return "unresolvable path"
+        name = target.name.lower()
+        lowered = str(target).lower().replace("\\", "/")
+        for marker in SENSITIVE_DIRS:
+            if f"/{marker}/" in lowered or lowered.endswith(f"/{marker}"):
+                return f"it lives in a credential store ({marker})"
+        if name in SENSITIVE_NAMES:
+            return f"{target.name} is a credential or browser-profile file"
+        if target.suffix.lower() in SENSITIVE_SUFFIXES:
+            return f"{target.suffix} files hold private keys or certificates"
+        if name.startswith(SENSITIVE_PREFIXES):
+            return "dotenv files hold API keys"
+        return None
+
+    def _guard_read(self, path: Path) -> None:
+        if self.allow_sensitive_reads:
+            return
+        reason = self.sensitive_reason(path)
+        if reason:
+            raise PermissionError(
+                f"RAY will not read {path.name}: {reason}. "
+                "Store keys in Settings > Connections (encrypted), or enable "
+                "permissions.allow_sensitive_reads if you really need this file."
+            )
+        if self.is_protected(path):
+            raise PermissionError(
+                f"RAY will not read {path} - it is in a protected system location. "
+                "Use the System tools for machine details instead."
+            )
 
     def _guard_mutation(self, *paths: Path) -> None:
         for path in paths:
@@ -171,6 +232,7 @@ class FileManager:
         target = self.resolve(path)
         if not target.is_file():
             raise FileNotFoundError(f"{target} is not a file")
+        self._guard_read(target)
         if target.stat().st_size > 5 * 1024 * 1024:
             raise ValueError("file is larger than 5 MB; use document extraction instead")
         try:
@@ -542,20 +604,34 @@ class FileManager:
                 archive = archive.with_suffix(".zip")
         else:
             archive = src.parent / f"{src.name}-backup-{stamp}.zip"
+        self._guard_mutation(archive)
         archive.parent.mkdir(parents=True, exist_ok=True)
+        skipped: list[str] = []
 
         if src.is_dir():
             base = src.parent
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
                 for dirpath, dirnames, filenames in os.walk(src):
-                    dirnames[:] = [name for name in dirnames if name not in {"node_modules", ".git", "__pycache__", ".venv"}]
+                    dirnames[:] = [
+                        name for name in dirnames
+                        if name not in {"node_modules", ".git", "__pycache__", ".venv"}
+                        and not self.sensitive_reason(Path(dirpath) / name)
+                    ]
                     for filename in filenames:
                         path = Path(dirpath) / filename
+                        if self.sensitive_reason(path):
+                            skipped.append(str(path))
+                            continue
                         try:
                             bundle.write(path, path.relative_to(base))
                         except OSError:
                             continue
         else:
+            if self.sensitive_reason(src) and not self.allow_sensitive_reads:
+                raise PermissionError(
+                    f"RAY will not copy {src.name} into an unencrypted zip: "
+                    "it is a credential or browser-profile file."
+                )
             with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
                 bundle.write(src, src.name)
 
@@ -567,6 +643,7 @@ class FileManager:
             "source": str(src),
             "verified": verification["ok"],
             "integrity": verification,
+            "skipped_sensitive": skipped[:20],
         }
 
     @staticmethod

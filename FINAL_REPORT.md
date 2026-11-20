@@ -28,13 +28,14 @@ Everything below can be re-checked with the commands in **Verification**.
 | Automation: 5 trigger types, conditions, 4 step types, history, safety refusals, scheduler | **Complete, tested** | `tests/test_automation.py` (15) |
 | Knowledge: extraction (PDF/DOCX/XLSX/PPTX/TXT/MD/CSV), FTS5 index, watch folders, local summaries | **Complete, tested** | `tests/test_memory_knowledge.py` (19) |
 | Long-term memory with user control (list/forget/export/import/prune, secret refusal) | **Complete, tested** | memory tests |
-| Local HTTP API (~60 routes) | **Complete, tested** | `tests/test_api.py` (33) |
+| Local HTTP API (~65 routes) | **Complete, tested** | `tests/test_api.py` (34) |
+| Security audit + clause set (leakage, breach scenarios, per-area rules) | **Complete** | `SECURITY.md`, `SECURITY_AUDIT.md`, `tests/test_hardening.py` |
 | Interface: 21 sections, command center, chat, voice, palette, modals, toasts, live charts | **Complete; rendered headlessly in every section** | `scripts/ui_smoke.mjs` output below |
 | Desktop window (PySide6 + QtWebEngine, tray, Ctrl+Space, menu) | **Written; not runnable here** | no `libGL.so.1` in this sandbox |
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 197 tests,
+Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 212 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -43,7 +44,7 @@ Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 197 tests,
 
 ```
 $ python -m pytest
-197 passed in 22.0s
+212 passed in 25.0s
 ```
 
 | Test file | Tests | Focus |
@@ -56,7 +57,8 @@ $ python -m pytest
 | `test_automation.py` | 15 | triggers, conditions, destructive refusal, history, scheduler |
 | `test_productivity.py` | 14 | tasks/recurrence, notes, reminders, calendar, focus/habits |
 | `test_security.py` | 14 | vault encryption, permissions, approvals, emergency stop, audit |
-| `test_core.py` | 9 | config merge/validation/corruption, migrations, FTS, backup/integrity |
+| `test_core.py` | 11 | config merge/validation/corruption, migrations, FTS, backup/integrity |
+| `test_hardening.py` | 15 | SSRF guard, sensitive-file reads, backup exclusions, interpreter flags, XML/zip bombs, file modes, token + rate limit, error hygiene, CLI env scrubbing |
 
 Interface smoke test (jsdom against the live server) — every section rendered,
 a task was created through the UI, settings credential fields were present, and

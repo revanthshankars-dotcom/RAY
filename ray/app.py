@@ -71,11 +71,18 @@ class RayApp:
 
         # services
         self.sysmon = SystemMonitor()
-        self.files = FileManager(self.paths.quarantine, self._known_downloads())
+        self.files = FileManager(
+            self.paths.quarantine,
+            self._known_downloads(),
+            allow_sensitive_reads=bool(self.config.get("permissions.allow_sensitive_reads", False)),
+        )
         self.apps = AppManager(self.db)
         self.controls = SystemControl(self.paths.screenshots)
         self.input = InputControl()
-        self.shell = ShellRunner(bool(self.config.get("permissions.allow_shell", False)))
+        self.shell = ShellRunner(
+            bool(self.config.get("permissions.allow_shell", False)),
+            allow_interpreter_eval=bool(self.config.get("permissions.allow_interpreter_eval", False)),
+        )
         self.config.on_change(self._on_config_change)
 
         self.tasks = TaskService(self.db, self.bus)
@@ -87,7 +94,7 @@ class RayApp:
 
         self.indexer = FileIndexer(self.db, self.config)
         self.search = IndexSearch(self.db)
-        self.browser = WebBrowser(self.db)
+        self.browser = WebBrowser(self.db, allow_private=bool(self.config.get("browser.allow_private_addresses", False)))
         self.media = MediaService(self.apps, self.config)
 
         self.automation = AutomationEngine(
@@ -190,6 +197,12 @@ class RayApp:
     def _on_config_change(self, key: str, value: Any) -> None:
         if key == "permissions.allow_shell":
             self.shell.enabled = bool(value)
+        if key == "permissions.allow_interpreter_eval":
+            self.shell.allow_interpreter_eval = bool(value)
+        if key == "permissions.allow_sensitive_reads":
+            self.files.allow_sensitive_reads = bool(value)
+        if key == "browser.allow_private_addresses":
+            self.browser.allow_private = bool(value)
         if key == "memory.enabled":
             self.memory.enabled = bool(value)
 

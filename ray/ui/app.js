@@ -157,8 +157,15 @@ function relative(value) {
   return date.toLocaleDateString();
 }
 
+function apiToken() {
+  const meta = document.querySelector('meta[name="ray-token"]');
+  return meta ? meta.getAttribute('content') || '' : '';
+}
+
 async function api(path, options = {}) {
   const init = { headers: { 'Content-Type': 'application/json' }, ...options };
+  const token = apiToken();
+  if (token) init.headers['X-RAY-Token'] = token;
   if (init.body && typeof init.body !== 'string') init.body = JSON.stringify(init.body);
   const response = await fetch(path, init);
   const type = response.headers.get('content-type') || '';

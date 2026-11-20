@@ -26,7 +26,15 @@ from ..core.logging_setup import get_logger
 log = get_logger("knowledge.extract")
 
 MAX_PDF_PAGES = 300
+MAX_PDF_BYTES = 128 * 1024 * 1024
 MAX_CHARS = 400_000
+# OOXML documents are zip archives of XML: both formats can be weaponised
+# (zip bombs decompress to gigabytes, XML entities explode exponentially).  The
+# limits below keep extraction linear no matter what the file claims to be.
+MAX_XML_BYTES = 8 * 1024 * 1024
+MAX_ENTRY_BYTES = 24 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+_ENTITY_DECL_RE = re.compile(rb"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".log", ".ini", ".cfg", ".json", ".yaml", ".yml",
     ".csv", ".tsv", ".py", ".js", ".ts", ".html", ".css", ".xml", ".ps1", ".sh",
@@ -52,8 +60,16 @@ def extract(path: str | Path, max_chars: int = MAX_CHARS) -> dict[str, Any]:
     }
 
     if suffix == ".pdf":
-        text, pages, note = _extract_pdf(target, max_chars)
-        result.update(text=text, pages=pages, note=note)
+        if result["size_bytes"] > MAX_PDF_BYTES:
+            result.update(
+                text="",
+                note=f"PDF is {result['size_bytes'] // (1024 * 1024)} MB; RAY reads PDFs up to "
+                     f"{MAX_PDF_BYTES // (1024 * 1024)} MB",
+                supported=False,
+            )
+        else:
+            text, pages, note = _extract_pdf(target, max_chars)
+            result.update(text=text, pages=pages, note=note)
     elif suffix == ".docx":
         result["text"] = _extract_docx(target, max_chars)
     elif suffix == ".pptx":
@@ -123,6 +139,24 @@ _XML_RUN_RE = re.compile(
 )
 
 
+def _safe_read(bundle: zipfile.ZipFile, name: str, budget: list[int]) -> bytes:
+    """Read one archive member, refusing bombs and oversize parts."""
+    info = bundle.getinfo(name)
+    if info.file_size > MAX_ENTRY_BYTES:
+        raise ValueError(f"{name} would decompress to {info.file_size} bytes - refused")
+    budget[0] -= info.file_size
+    if budget[0] < 0:
+        raise ValueError("archive expands beyond the extraction budget - refused")
+    return bundle.read(name)
+
+
+def _check_xml(xml_bytes: bytes) -> None:
+    if len(xml_bytes) > MAX_XML_BYTES:
+        raise ValueError("XML part is too large to parse safely")
+    if _ENTITY_DECL_RE.search(xml_bytes[:65536]):
+        raise ValueError("XML with DOCTYPE/ENTITY declarations is not processed")
+
+
 def _xml_text_fallback(xml_bytes: bytes) -> str:
     """Bare regex reader for OOXML fragments with undeclared prefixes.
 
@@ -144,9 +178,12 @@ def _xml_text_fallback(xml_bytes: bytes) -> str:
 
 def _xml_text(xml_bytes: bytes) -> str:
     try:
+        _check_xml(xml_bytes)
         root = ElementTree.fromstring(xml_bytes)
     except ElementTree.ParseError:
         return _xml_text_fallback(xml_bytes)
+    except ValueError as exc:
+        return f"[skipped: {exc}]"
     parts: list[str] = []
     for node in root.iter():
         tag = node.tag.rsplit("}", 1)[-1]
@@ -164,8 +201,8 @@ def _xml_text(xml_bytes: bytes) -> str:
 def _extract_docx(path: Path, max_chars: int) -> str:
     try:
         with zipfile.ZipFile(path) as bundle:
-            xml = bundle.read("word/document.xml")
-    except (zipfile.BadZipFile, KeyError) as exc:
+            xml = _safe_read(bundle, "word/document.xml", [MAX_ARCHIVE_BYTES])
+    except (zipfile.BadZipFile, KeyError, ValueError) as exc:
         return f"[could not read docx: {exc}]"
     text = _xml_text(xml)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -180,12 +217,13 @@ def _extract_pptx(path: Path, max_chars: int) -> str:
                 if name.startswith("ppt/slides/slide") and name.endswith(".xml")
             )
             chunks = []
+            budget = [MAX_ARCHIVE_BYTES]
             for index, slide in enumerate(slides, start=1):
-                text = _xml_text(bundle.read(slide)).strip()
+                text = _xml_text(_safe_read(bundle, slide, budget)).strip()
                 if text:
                     chunks.append(f"--- slide {index} ---\n{text}")
             return "\n\n".join(chunks)[:max_chars]
-    except zipfile.BadZipFile as exc:
+    except (zipfile.BadZipFile, ValueError) as exc:
         return f"[could not read pptx: {exc}]"
 
 
@@ -202,9 +240,12 @@ def _extract_xlsx(path: Path, max_chars: int) -> str:
     try:
         with zipfile.ZipFile(path) as bundle:
             names = bundle.namelist()
+            budget = [MAX_ARCHIVE_BYTES]
             shared: list[str] = []
             if "xl/sharedStrings.xml" in names:
-                root = ElementTree.fromstring(bundle.read("xl/sharedStrings.xml"))
+                shared_xml = _safe_read(bundle, "xl/sharedStrings.xml", budget)
+                _check_xml(shared_xml)
+                root = ElementTree.fromstring(shared_xml)
                 for item in root.iter():
                     if _local(item.tag) == "si":
                         shared.append("".join(
@@ -216,7 +257,9 @@ def _extract_xlsx(path: Path, max_chars: int) -> str:
             )
             output: list[str] = []
             for sheet in sheets:
-                root = ElementTree.fromstring(bundle.read(sheet))
+                sheet_xml = _safe_read(bundle, sheet, budget)
+                _check_xml(sheet_xml)
+                root = ElementTree.fromstring(sheet_xml)
                 output.append(f"--- {Path(sheet).stem} ---")
                 for row in root.iter():
                     if _local(row.tag) != "row":
@@ -244,7 +287,7 @@ def _extract_xlsx(path: Path, max_chars: int) -> str:
                     if sum(len(part) for part in output) > max_chars:
                         break
             return "\n".join(output)[:max_chars]
-    except (zipfile.BadZipFile, ElementTree.ParseError) as exc:
+    except (zipfile.BadZipFile, ElementTree.ParseError, ValueError) as exc:
         return f"[could not read xlsx: {exc}]"
 
 

@@ -109,6 +109,11 @@ DEFAULTS: dict[str, Any] = {
         "emergency_stop": False,
         "session_lock_minutes": 0,
         "allow_shell": False,
+        "allow_interpreter_eval": False,
+        "allow_sensitive_reads": False,
+    },
+    "browser": {
+        "allow_private_addresses": False,
     },
     "indexing": {
         "roots": [],
@@ -229,6 +234,11 @@ class Config:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
+            if os.name != "nt":
+                try:
+                    os.chmod(tmp, 0o600)
+                except OSError:  # pragma: no cover
+                    pass
             os.replace(tmp, self.path)
         except OSError as exc:
             log.error("could not save config: %s", exc)

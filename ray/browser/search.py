@@ -13,11 +13,13 @@ instructions, and is truncated before it reaches a model.
 from __future__ import annotations
 
 import html
+import ipaddress
 import re
+import socket
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, unquote, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 
 import httpx
 
@@ -33,6 +35,88 @@ SEARCH_ENDPOINTS = [
     "https://html.duckduckgo.com/html/",
     "https://lite.duckduckgo.com/lite/",
 ]
+
+# --------------------------------------------------------------- fetch policy
+# RAY fetches on behalf of a model, so every URL is hostile input: it may point
+# at loopback, the LAN, a router admin page, a cloud metadata service or a
+# ``file://`` path.  Fetching is therefore restricted to public http(s) targets
+# and every redirect hop is re-checked (a redirect is just a second URL).
+MAX_REDIRECTS = 5
+MAX_PAGE_BYTES = 3 * 1024 * 1024
+BLOCKED_HOST_SUFFIXES = (
+    ".localhost", ".local", ".localdomain", ".internal", ".intranet",
+    ".home.arpa", ".lan", ".corp", ".private",
+)
+
+
+class UnsafeTarget(ValueError):
+    """Raised when a URL would make RAY fetch something it should not."""
+
+
+def _is_private_address(raw: str) -> bool:
+    try:
+        address = ipaddress.ip_address(raw)
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
+
+
+def check_fetch_target(url: str, allow_private: bool = False) -> str:
+    """Validate one URL before RAY opens a socket to it.
+
+    Returns the URL to fetch (``https://`` is assumed when no scheme is given).
+    Raises :class:`UnsafeTarget` for anything that is not a public http(s) URL.
+    """
+    candidate = (url or "").strip()
+    if not candidate:
+        raise UnsafeTarget("no URL given")
+    if "://" not in candidate:
+        candidate = "https://" + candidate.lstrip("/")
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise UnsafeTarget(f"{parsed.scheme or 'that'} URLs are not fetched (http and https only)")
+    if parsed.username or parsed.password:
+        raise UnsafeTarget("URLs with embedded credentials are refused")
+    host = (parsed.hostname or "").strip().rstrip(".").lower()
+    if not host:
+        raise UnsafeTarget("URL has no host")
+    if allow_private:
+        return candidate
+    if host in ("localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"):
+        raise UnsafeTarget("RAY does not fetch loopback addresses")
+    if host.endswith(BLOCKED_HOST_SUFFIXES):
+        raise UnsafeTarget(f"RAY does not fetch private network names ({host})")
+    try:
+        literal = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _is_private_address(str(literal)):
+            raise UnsafeTarget(f"RAY does not fetch private or local addresses ({host})")
+        return candidate
+    if "." not in host:
+        # Single-label names resolve through local search domains (intranets,
+        # routers, printer consoles) - never a public web page.
+        raise UnsafeTarget(f"RAY does not fetch intranet hostnames ({host})")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80),
+                                   proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError):
+        return candidate  # offline or bad DNS: let httpx report the failure
+    for info in infos:
+        address = info[4][0]
+        if _is_private_address(address):
+            raise UnsafeTarget(f"{host} resolves to a private address ({address})")
+    return candidate
 
 
 @dataclass
@@ -194,9 +278,11 @@ def parse_search_html(markup: str) -> list[SearchResult]:
 
 
 class WebBrowser:
-    def __init__(self, db=None, timeout: float = 20.0) -> None:
+    def __init__(self, db=None, timeout: float = 20.0, allow_private: bool = False) -> None:
         self.db = db
         self.timeout = timeout
+        # Only ever true when the user explicitly allows LAN/loopback access.
+        self.allow_private = allow_private
 
     # ------------------------------------------------------------------ search
     def search(self, query: str, limit: int = 8) -> dict[str, Any]:
@@ -231,32 +317,66 @@ class WebBrowser:
         url = (url or "").strip()
         if not url:
             raise ValueError("no URL given")
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
         headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
+        current = url
         try:
-            with httpx.Client(timeout=self.timeout, follow_redirects=True, headers=headers) as client:
-                response = client.get(url)
+            with httpx.Client(timeout=self.timeout, follow_redirects=False, headers=headers) as client:
+                for _hop in range(MAX_REDIRECTS + 1):
+                    current = check_fetch_target(current, allow_private=self.allow_private)
+                    with client.stream("GET", current) as response:
+                        if response.is_redirect:
+                            location = response.headers.get("location", "")
+                            if not location:
+                                return Page(url=current, ok=False, status=response.status_code,
+                                            error="redirect without a location")
+                            current = urljoin(str(response.url), location)
+                            continue
+                        status = response.status_code
+                        content_type = response.headers.get("content-type", "")
+                        if status >= 400:
+                            return Page(url=current, ok=False, status=status,
+                                        error=f"HTTP {status}")
+                        if ("html" not in content_type and "text" not in content_type
+                                and "xml" not in content_type):
+                            return Page(
+                                url=current, ok=False, status=status,
+                                error=f"unsupported content type: {content_type or 'unknown'} "
+                                      "(RAY reads text pages only)",
+                            )
+                        chunks: list[bytes] = []
+                        received = 0
+                        for chunk in response.iter_bytes():
+                            chunks.append(chunk)
+                            received += len(chunk)
+                            if received >= MAX_PAGE_BYTES:
+                                break
+                        body = b"".join(chunks)[:MAX_PAGE_BYTES]
+                        final_url = str(response.url)
+                        break
+                else:
+                    return Page(url=current, ok=False, error="too many redirects")
+        except UnsafeTarget as exc:
+            log.warning("blocked fetch: %s", exc)
+            return Page(url=url, ok=False, error=f"blocked: {exc}")
         except httpx.HTTPError as exc:
-            return Page(url=url, ok=False, error=f"{exc.__class__.__name__}: {exc}")
-        content_type = response.headers.get("content-type", "")
-        if response.status_code >= 400:
-            return Page(url=url, ok=False, status=response.status_code,
-                        error=f"HTTP {response.status_code}")
-        if "html" not in content_type and "text" not in content_type and "xml" not in content_type:
-            return Page(
-                url=url, ok=False, status=response.status_code,
-                error=f"unsupported content type: {content_type or 'unknown'} (RAY reads text pages only)",
-            )
-        text, title, links = html_to_text(response.text)
-        self._record_history(title or url, url, "page")
+            return Page(url=current, ok=False, error=f"{exc.__class__.__name__}: {exc}")
+        charset = "utf-8"
+        match = re.search(r"charset=([\w.-]+)", content_type, re.IGNORECASE)
+        if match:
+            charset = match.group(1)
+        try:
+            markup = body.decode(charset, "replace")
+        except LookupError:
+            markup = body.decode("utf-8", "replace")
+        text, title, links = html_to_text(markup)
+        self._record_history(title or final_url, final_url, "page")
         return Page(
-            url=str(response.url),
-            title=title or url,
+            url=final_url,
+            title=title or final_url,
             text=text[:max_chars],
             links=links,
             ok=True,
-            status=response.status_code,
+            status=status,
         )
 
     # ---------------------------------------------------------------- research

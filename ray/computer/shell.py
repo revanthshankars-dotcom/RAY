@@ -52,9 +52,16 @@ FORBIDDEN_PATTERNS = [
 ]
 
 
+# Interpreter flags that turn an "allowed command" into arbitrary code execution.
+EVAL_FLAGS = {"-c", "-e", "-m", "--eval", "--exec", "exec", "--run"}
+INTERPRETERS = {"python", "python3", "pythonw", "node", "nodejs", "npm", "npx", "pip", "pip3"}
+
+
 class ShellRunner:
-    def __init__(self, enabled: bool = False) -> None:
+    def __init__(self, enabled: bool = False, allow_interpreter_eval: bool = False) -> None:
         self.enabled = enabled
+        # Off by default: "python" on an allow-list is otherwise a full shell.
+        self.allow_interpreter_eval = allow_interpreter_eval
 
     def validate(self, command: list[str] | str, cwd: str | Path | None = None) -> list[str]:
         if not self.enabled:
@@ -77,6 +84,12 @@ class ShellRunner:
                 f"'{base}' is not on RAY's allow-list of safe commands. "
                 f"Allowed: {', '.join(sorted(ALLOWED_COMMANDS))}"
             )
+        if base in INTERPRETERS and not self.allow_interpreter_eval:
+            if any(str(part).strip().lower() in EVAL_FLAGS for part in command[1:]):
+                raise PermissionError(
+                    f"'{base}' with an inline-code flag is arbitrary code execution, not a safe "
+                    "command. Use a script file, or enable permissions.allow_interpreter_eval."
+                )
         if shutil.which(executable) is None and not Path(executable).exists():
             raise FileNotFoundError(f"'{executable}' is not installed")
         if cwd is not None:

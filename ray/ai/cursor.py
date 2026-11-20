@@ -43,6 +43,14 @@ from .base import (
     ProviderUnavailable,
 )
 
+# Keys a spawned CLI must never inherit: only Cursor's own key is forwarded.
+ENV_SCRUBBED = (
+    "RAY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+    "RAY_FISH_API_KEY", "FISH_API_KEY", "FISH_AUDIO_API_KEY",
+    "RAY_GROK_API_KEY", "XAI_API_KEY", "GROK_API_KEY",
+    "RAY_CURSOR_API_KEY", "RAY_API_TOKEN",
+)
+
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 CANDIDATE_BINARIES = ("cursor-agent", "agent")
 CANDIDATE_PATHS = (
@@ -125,9 +133,7 @@ class CursorProvider(BaseProvider):
         args += [str(item) for item in (self.config.get("extra_args") or [])]
         args.append(prompt)
 
-        env = dict(os.environ)
-        if self.api_key:
-            env["CURSOR_API_KEY"] = self.api_key
+        env = self._env()
 
         started = time.time()
         try:
@@ -224,6 +230,20 @@ class CursorProvider(BaseProvider):
         }
 
     # --------------------------------------------------------------- helpers
+    def _env(self) -> dict[str, str]:
+        """Environment for the Cursor CLI: no other provider's key.
+
+        RAY spawns a third-party binary; handing it every API key in the
+        environment would let it (or a dependency it loads) read Gemini, Fish,
+        xAI and the local API token.  Only Cursor's own key is forwarded.
+        """
+        env = dict(os.environ)
+        for name in ENV_SCRUBBED:
+            env.pop(name, None)
+        if self.api_key:
+            env["CURSOR_API_KEY"] = self.api_key
+        return env
+
     def _command(self, args: list[str]) -> list[str]:
         """Windows .cmd/.bat shims must go through the command interpreter."""
         if args and (args[0].lower().endswith((".cmd", ".bat"))):
@@ -231,9 +251,7 @@ class CursorProvider(BaseProvider):
         return args
 
     def _run(self, args: list[str], *, timeout: float) -> subprocess.CompletedProcess:
-        env = dict(os.environ)
-        if self.api_key:
-            env["CURSOR_API_KEY"] = self.api_key
+        env = self._env()
         try:
             return subprocess.run(  # noqa: S603 - explicit binary, no shell
                 self._command(args),

@@ -14,6 +14,7 @@ Design notes
 
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
 import threading
@@ -298,8 +299,31 @@ class Database:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_down()
         self._local = threading.local()
         self._write_lock = threading.RLock()
+
+    def _lock_down(self) -> None:
+        """Make the data directory owner-only on POSIX.
+
+        The database holds tasks, notes, memories and the audit trail.  On a
+        shared machine another local account must not be able to read it, and
+        SQLite creates the file with the process umask (often 0644).
+        """
+        if os.name == "nt":  # pragma: no cover - ACLs, not modes
+            return
+        for target, mode in ((self.path.parent, 0o700),):
+            try:
+                os.chmod(target, mode)
+            except OSError:  # pragma: no cover - read-only or foreign mount
+                pass
+        for name in (self.path.name, f"{self.path.name}-wal", f"{self.path.name}-shm"):
+            candidate = self.path.parent / name
+            try:
+                if candidate.exists():
+                    os.chmod(candidate, 0o600)
+            except OSError:  # pragma: no cover
+                pass
 
     # ------------------------------------------------------------ connections
     def connect(self) -> sqlite3.Connection:
@@ -311,6 +335,7 @@ class Database:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA busy_timeout=8000")
+            self._lock_down()  # the file only exists after the first connect
             self._local.conn = conn
         return conn
 

@@ -187,7 +187,16 @@ and budget limits. Approval-gated steps pause and show **Approve / Deny**.
 - **Deletes are recoverable**: files move to `quarantine/` with a manifest and
   can be restored from Security Center. Deleting protected roots is refused.
 - **Shell commands** are off by default, accept argument lists only (never
-  strings), require an allow-listed binary, and reject shell metacharacters.
+  strings), require an allow-listed binary, reject shell metacharacters, and
+  refuse inline interpreter code (`python -c`, `node -e`) unless you opt in.
+- **File reads are scoped**: `.ssh`, `.aws`, `.kube`, browser profiles, `.env`,
+  private keys and RAY's own vault/database are refused, even to a level-1 tool,
+  so a prompt-injected "read my key file" cannot reach a model.
+- **Outbound fetching is public-web only**: loopback, LAN, link-local and cloud
+  metadata addresses are blocked, redirects are re-validated hop by hop, and
+  bodies are capped — the fetch path cannot be used as an SSRF proxy.
+- **Parsers are bounded**: PDFs, OOXML members, archives and XML are size-capped
+  and `DOCTYPE`/`ENTITY` declarations are refused; RAY never extracts archives.
 - **Automation** never runs destructive tools — a workflow that tries is marked
   failed rather than escalated silently.
 - **No hidden uploads**: document text goes to a provider only when you ask a
@@ -195,8 +204,16 @@ and budget limits. Approval-gated steps pause and show **Approve / Deny**.
 - **Credentials** are encrypted at rest, redacted from logs, never returned by
   the API and refused by memory/settings/notes if you paste one by mistake.
 - **Local API hardening**: JSON-only writes, cross-site writes refused (even when
-  the interface is network-bound), strict CSP, no wildcard CORS. Binding beyond
-  `127.0.0.1` is possible but the UI warns you that the network can reach it.
+  the interface is network-bound), strict CSP, no wildcard CORS, 2 MiB body cap,
+  generic 500s (details stay in the local log), rate limiting, and an optional
+  bearer token (`RAY_API_TOKEN`) for shared machines. Binding beyond `127.0.0.1`
+  is possible but the UI warns you that the network can reach it.
+- **Data at rest is owner-only**: RAY's folders are `0700`, the database,
+  config and vault key are `0600` on POSIX; backups skip credential files.
+- **Clauses and audit**: [`SECURITY.md`](SECURITY.md) states one rule per area
+  (API, auth, files, shell, fetch, AI, memory, automation, audit, media, data,
+  install, UI); [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) records the findings,
+  the fixes and the accepted risks.
 - **Bounded work**: retries, timeouts, per-provider daily budgets, step limits,
   task deadlines, bounded event buffer and capped response cache.
 
@@ -205,6 +222,8 @@ and budget limits. Approval-gated steps pause and show **Approve / Deny**.
 ```
 main.py                  launcher, environment check, desktop/browser/headless modes
 RAY.bat                  Windows double-click launcher
+SECURITY.md              one security clause per area (the normative rule set)
+SECURITY_AUDIT.md        leakage review, findings, breach scenarios, accepted risks
 ray/
   core/        paths, redacting logs, config, SQLite schema/migrations, event bus
   security/    credential vault, permissions/approvals, audit, secret detection
@@ -223,17 +242,19 @@ ray/
   ui/          HTML/CSS/JS interface (no build step)
   desktop/     optional PySide6 window with tray icon
 scripts/       install.ps1, ui_smoke.mjs
-tests/         pytest suite (197 tests)
+tests/         pytest suite (212 tests)
 ```
 
 ## Testing
 
 ```bash
 pip install pytest
-python -m pytest                     # 197 tests, offline, no keys needed
+python -m pytest                     # 212 tests, offline, no keys needed
 ```
 
-The suite covers the database, credential vault, permission/approval flow,
+The suite covers the database, credential vault, the hardening regressions
+(SSRF, sensitive reads, parser limits, file modes, tokens, rate limits),
+the permission/approval flow,
 files (quarantine round-trip, backups, protected paths), productivity,
 automation triggers/conditions/safety, intent parsing, orchestration, provider
 request/response handling with injected HTTP responses, knowledge extraction,

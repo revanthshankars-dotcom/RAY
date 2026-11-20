@@ -39,7 +39,23 @@ class Paths:
 
     def _ensure(self, path: Path) -> Path:
         path.mkdir(parents=True, exist_ok=True)
+        self._owner_only(path)
         return path
+
+    @staticmethod
+    def _owner_only(path: Path, mode: int = 0o700) -> None:
+        """POSIX mode 0700 on RAY's own folders.
+
+        The data folder holds the database (tasks, notes, memories, audit), the
+        logs and the vault key.  A shared or lab machine must not let another
+        local account walk in.  Windows inherits the user profile ACL instead.
+        """
+        if os.name == "nt":
+            return
+        try:
+            os.chmod(path, mode)
+        except OSError:  # pragma: no cover - read-only or foreign mount
+            pass
 
     @property
     def data(self) -> Path:

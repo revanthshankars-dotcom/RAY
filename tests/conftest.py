@@ -58,9 +58,13 @@ class Client:
     def __init__(self, base: str) -> None:
         self.base = base.rstrip("/")
 
-    def get(self, path: str):
-        with urllib.request.urlopen(f"{self.base}{path}", timeout=20) as response:
-            return json.loads(response.read())
+    def get(self, path: str, headers: dict | None = None):
+        request = urllib.request.Request(f"{self.base}{path}", headers=headers or {}, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return json.loads(error.read())
 
     def post(self, path: str, body: dict | None = None):
         request = urllib.request.Request(
