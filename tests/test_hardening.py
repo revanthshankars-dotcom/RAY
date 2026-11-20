@@ -268,19 +268,46 @@ def test_rate_limit_stops_a_runaway_script(server):
     assert any(item["ok"] is False and "too many requests" in item["error"] for item in results)
 
 
-# -------------------------------------------------------------------- providers
-def test_spawned_cli_does_not_inherit_other_provider_keys(monkeypatch):
-    from ray.ai.cursor import CursorProvider
+# ------------------------------------------------------------ engine upgrades
+def test_retired_engines_are_gone_from_the_code(app):
+    """No Cursor CLI or Grok adapter should survive the switch to OpenRouter."""
+    import importlib
 
-    monkeypatch.setenv("GEMINI_API_KEY", "AIza-should-not-travel")
-    monkeypatch.setenv("FISH_API_KEY", "fish-should-not-travel")
-    monkeypatch.setenv("RAY_GROK_API_KEY", "xai-should-not-travel")
-    provider = CursorProvider({"binary": "cursor-agent"}, api_key="cursor-key")
-    env = provider._env()
-    assert env.get("CURSOR_API_KEY") == "cursor-key"
-    assert "GEMINI_API_KEY" not in env
-    assert "FISH_API_KEY" not in env
-    assert "RAY_GROK_API_KEY" not in env
+    import pytest
+
+    for module in ("ray.ai.cursor", "ray.ai.grok"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(module)
+    assert "openrouter" in app.router.routes()["chat"]
+    assert "cursor" not in app.router.routes()["chat"]
+    assert "grok" not in app.router.routes()["planning"]
+
+
+def test_provider_descriptions_never_carry_key_material(app):
+    from ray.ai.openrouter import OpenRouterProvider
+
+    provider = OpenRouterProvider({"enabled": True, "model": "google/gemini-2.5-flash"}, "sk-or-secret-value")
+    described = str(provider.describe())
+    assert "sk-or-secret-value" not in described
+    assert "openrouter" in described
+
+
+def test_engine_switch_audit_does_not_repeat_forever(app):
+    """A recurring cap switch is logged once per config generation, not per call."""
+    from ray.ai.base import ChatMessage
+
+    from tests.test_ai import FakeProvider, _router_with  # noqa: PLC0415
+
+    from ray.ai.cache import UsageTracker
+
+    UsageTracker(app.db).record("openrouter", "m", "chat", cost_usd=9.0)
+    app.config.set("ai.cap_behaviour", "switch", save=False)
+    app.config.set("ai.credits.openrouter.monthly_usd", 5, save=False)
+    router = _router_with(app, {"openrouter": FakeProvider("openrouter"), "gemini": FakeProvider("gemini")})
+    for _ in range(3):
+        router.chat("chat", [ChatMessage("user", "hi")])
+    rows = app.db.query("SELECT * FROM audit_log WHERE action = 'ai_engine_switch'")
+    assert len(rows) == 1
 
 
 def test_app_home_and_config_are_owner_only(app):

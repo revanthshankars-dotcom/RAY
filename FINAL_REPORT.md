@@ -16,11 +16,11 @@ Everything below can be re-checked with the commands in **Verification**.
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| Engine wiring (`ray/app.py`), single data home, SQLite schema v3 + FTS5 | **Complete, tested** | `tests/test_core.py` |
+| Engine wiring (`ray/app.py`), single data home, SQLite schema v4 + FTS5 | **Complete, tested** | `tests/test_core.py` |
 | Encrypted credential vault (Fernet, mode 0600, env fallback, rotation) | **Complete, tested** | `tests/test_security.py` |
 | Permission levels, approval queue, emergency stop, audit log | **Complete, tested** | 14 security tests + API approval round-trip |
 | 80-tool validated command layer | **Complete, tested** | tool catalogue test, approval tests, capability probes |
-| Cursor CLI + Gemini + Grok (opt-in) + Fish Audio providers, routing, retries, budgets, cache, usage | **Complete; request/response tested with injected HTTP and a stub CLI** | `tests/test_ai.py` |
+| OpenRouter (one key, many models) + Gemini + Fish Audio providers, engine policy with local credit caps, audited engine switches, retries, cache, usage incl. spend | **Complete; request/response and policy tested with injected HTTP** | `tests/test_ai.py` |
 | Intent parser + planner + orchestrator: 32 plain-English phrasings offline (apps, sites, panels, clipboard, typing, focus, index, system/process questions, help, honest limits), progress, cancel, resume, step limits | **Complete, tested** | `tests/test_brain.py` (73) |
 | 12 agents with tool remits, run log | **Complete, tested** | agent selection + `agent_runs` assertions |
 | Files: browse/search/open/rename/copy/move, quarantine+restore, verified zip backups, duplicates, organiser | **Complete, tested** | `tests/test_computer.py` |
@@ -35,7 +35,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 252 tests,
+Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 261 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -44,14 +44,14 @@ Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 252 tests,
 
 ```
 $ python -m pytest
-252 passed in 27.0s
+261 passed in 28.0s
 ```
 
 | Test file | Tests | Focus |
 | --- | --- | --- |
 | `test_api.py` | 34 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
 | `test_brain.py` | 73 | plain-English intents (32 phrasings), planner/tool schema agreement, agent hints, time parsing, plans, step caps, approvals, cancel, resume |
-| `test_ai.py` | 39 | Cursor CLI parsing/timeout/auth, Grok/Gemini/Fish parsing, tool calls, error mapping, routing fallback, budget, cache |
+| `test_ai.py` | 42 | OpenRouter/Gemini/Fish parsing, tool calls, 402/429 mapping, engine policy (order, caps, stop vs switch, capability filter), switch auditing, cache |
 | `test_memory_knowledge.py` | 19 | memory CRUD/export/prune/secrets, OOXML extraction, FTS search, excludes |
 | `test_computer.py` | 18 | files (quarantine round-trip, backups, protected paths), metrics, shell safety |
 | `test_automation.py` | 15 | triggers, conditions, destructive refusal, history, scheduler |
@@ -119,7 +119,7 @@ Windows machine:
 | Keyboard/mouse automation | no `pynput` | approve a `press_hotkey` call |
 | App launching/closing | sandbox has no Windows app model | "open notepad" |
 | Power actions (lock/sleep/shutdown) | intentionally guarded; not executed here | approve a `power_off` call |
-| Real Cursor/Gemini/Fish calls | the Cursor CLI is not installed here, there are no API keys, and provider hosts are unreachable from this sandbox | Settings → Test each provider on your PC |
+| Real OpenRouter/Gemini/Fish calls | there are no API keys here and provider hosts are unreachable from this sandbox | Settings → Test each provider on your PC |
 | Fish Audio sounds like your voice | needs your key/voice id | Voice → Load voices → Speak |
 | Research over the live web | outbound internet restricted here | Browser → Research |
 | Offline speech-to-text | `faster-whisper` not installed (large download) | Install it, or use browser speech recognition |
@@ -175,9 +175,10 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -WithDesktop -WithA
 
 or double-click `RAY.bat`. The interface opens at `http://127.0.0.1:8765/`.
 
-1. **Settings → AI providers** — install the Cursor CLI (`cursor.com/cli`, `cursor-agent login`) or paste a Gemini key
-   (`aistudio.google.com/apikey`), Fish Audio key (`fish.audio`). Press **Test**
-   for each; the result is a real API probe, not a placeholder.
+1. **Settings → AI providers** — paste an OpenRouter key (`openrouter.ai/keys`),
+   optionally a Gemini key (`aistudio.google.com/apikey`) and a Fish Audio key
+   (`fish.audio`). Press **Test** for each; the result is a real API probe, not a
+   placeholder. Set the monthly caps on the same screen.
 2. Optional: Fish Audio voice id (`reference_id`), then **Voice → Load voices**.
 3. **Knowledge** — add a folder to index; nothing leaves the machine.
 4. **Security** — read the three permission levels, decide whether to enable

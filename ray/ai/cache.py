@@ -83,13 +83,15 @@ class UsageTracker:
         ok: bool = True,
         error: str = "",
         cached: bool = False,
+        cost_usd: float = 0.0,
     ) -> None:
         self.db.execute(
-            "INSERT INTO usage (ts, provider, model, kind, input_tokens, output_tokens, characters, ok, error, cached) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO usage (ts, provider, model, kind, input_tokens, output_tokens, characters, ok, error, cached, cost_usd) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 utcnow(), provider, model, kind, int(input_tokens), int(output_tokens),
                 int(characters), 1 if ok else 0, (error or "")[:300], 1 if cached else 0,
+                round(float(cost_usd or 0.0), 6),
             ),
         )
 
@@ -102,7 +104,8 @@ class UsageTracker:
             "SUM(input_tokens) AS input_tokens, "
             "SUM(output_tokens) AS output_tokens, "
             "SUM(characters) AS characters, "
-            "SUM(cached) AS cached "
+            "SUM(cached) AS cached, "
+            "COALESCE(SUM(cost_usd), 0) AS cost_usd "
             "FROM usage WHERE ts >= datetime('now','start of day') GROUP BY provider"
         )
         totals = {
@@ -112,6 +115,7 @@ class UsageTracker:
             "input_tokens": sum(int(row["input_tokens"] or 0) for row in rows),
             "output_tokens": sum(int(row["output_tokens"] or 0) for row in rows),
             "characters": sum(int(row["characters"] or 0) for row in rows),
+            "cost_usd": round(sum(float(row["cost_usd"] or 0) for row in rows), 6),
         }
         return {"by_provider": rows, "totals": totals}
 
@@ -123,9 +127,39 @@ class UsageTracker:
 
     def history(self, days: int = 14) -> list[dict]:
         return self.db.query(
-            "SELECT substr(ts,1,10) AS day, provider, COUNT(*) AS calls "
+            "SELECT substr(ts,1,10) AS day, provider, COUNT(*) AS calls, "
+            "COALESCE(SUM(cost_usd), 0) AS cost_usd "
             "FROM usage WHERE ts >= datetime('now', ?) GROUP BY day, provider ORDER BY day",
             (f"-{int(days)} days",),
+        )
+
+    def month_spend(self, provider: str) -> dict[str, Any]:
+        """Spend for the current calendar month, from the local meter.
+
+        ``cost_usd`` is what providers reported; rows where a provider bill was
+        not reported still count as calls but contribute estimated cost, and
+        ``estimated`` says so honestly.
+        """
+        row = self.db.query_one(
+            "SELECT COUNT(*) AS calls, "
+            "COALESCE(SUM(cost_usd), 0) AS cost_usd, "
+            "SUM(CASE WHEN cost_usd > 0 THEN 1 ELSE 0 END) AS reported "
+            "FROM usage WHERE provider = ? AND ts >= datetime('now','start of month')",
+            (provider,),
+        ) or {}
+        calls = int(row.get("calls") or 0)
+        reported = int(row.get("reported") or 0)
+        return {
+            "calls": calls,
+            "cost_usd": round(float(row.get("cost_usd") or 0.0), 6),
+            "reported_calls": reported,
+            "estimated": bool(calls and reported < calls),
+        }
+
+    def spend_month(self) -> list[dict[str, Any]]:
+        return self.db.query(
+            "SELECT provider, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0) AS cost_usd "
+            "FROM usage WHERE ts >= datetime('now','start of month') GROUP BY provider"
         )
 
     def calls_today(self, provider: str) -> int:

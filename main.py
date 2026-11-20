@@ -85,7 +85,11 @@ def environment_report(home: str | None) -> int:
 
     api_keys = {
         name: bool(os.environ.get(env))
-        for name, env in (("grok", "XAI_API_KEY"), ("gemini", "GEMINI_API_KEY"), ("fish", "FISH_AUDIO_API_KEY"))
+        for name, env in (
+            ("openrouter", "RAY_OPENROUTER_API_KEY"),
+            ("gemini", "RAY_GEMINI_API_KEY"),
+            ("fish", "RAY_FISH_API_KEY"),
+        )
     }
     print("\nProvider keys in environment:", ", ".join(f"{k}={'set' if v else 'unset'}" for k, v in api_keys.items()))
     print("(Keys entered in the RAY interface are stored encrypted in the data folder.)")

@@ -123,19 +123,19 @@ def test_bad_json_body_is_reported(client):
 
 
 def test_credentials_never_echoed(client, app):
-    saved = client.post("/api/credentials", {"name": "grok", "value": "xai-very-secret-value"})
+    saved = client.post("/api/credentials", {"name": "openrouter", "value": "sk-or-very-secret-value"})
     assert saved["ok"] is True
-    assert "xai-very-secret-value" not in json.dumps(saved)
+    assert "sk-or-very-secret-value" not in json.dumps(saved)
     assert saved["data"]["saved"] is True
 
     listed = client.get("/api/providers")
-    assert "xai-very-secret-value" not in json.dumps(listed)
-    grok = next(item for item in listed["data"]["providers"]["providers"] if item["name"] == "grok")
-    assert grok["configured"] is True
+    assert "sk-or-very-secret-value" not in json.dumps(listed)
+    openrouter = next(item for item in listed["data"]["providers"]["providers"] if item["name"] == "openrouter")
+    assert openrouter["configured"] is True
 
-    removed = client.delete("/api/credentials", {"name": "grok"})
+    removed = client.delete("/api/credentials", {"name": "openrouter"})
     assert removed["ok"] is True
-    assert app.credentials.get("grok") is None
+    assert app.credentials.get("openrouter") is None
 
 
 def test_provider_test_without_key_explains(client):
@@ -347,27 +347,65 @@ def test_response_headers_are_locked_down(server):
         assert headers["Referrer-Policy"] == "no-referrer"
 
 
-def test_cursor_provider_endpoint_explains_setup(client):
-    info = client.get("/api/providers/cursor")["data"]
-    assert info["name"] == "cursor"
-    assert "cursor-agent login" in info["install"]["login"]
-    assert "--mode ask" not in info  # documentation lives in the UI, not the payload
-    if not info["binary"]:
-        assert info["available"] is False
-        assert "Cursor CLI not found" in info["detail"]
-        assert info["authenticated"] is False
-    saved = client.post("/api/providers/cursor", {"model": "sonnet-4", "workspace": ""})
-    assert saved["data"]["saved"] is True
-    assert client.get("/api/providers/cursor")["data"]["model"] == "sonnet-4"
+def test_engines_endpoint_describes_the_policy(client):
+    data = client.get("/api/ai/engines")["data"]
+    assert data["policy"] == "preference"
+    assert data["cap_behaviour"] == "stop"
+    assert data["preference"] == ["openrouter", "gemini"]
+    engines = {item["name"]: item for item in data["engines"]}
+    assert set(engines) == {"openrouter", "gemini", "fish"}
+    assert engines["openrouter"]["credit"]["monthly_usd"] == 0
+    assert engines["openrouter"]["configured"] is False
+    # the payload explains itself, without ever carrying a key
+    assert "sk-or" not in json.dumps(data)
+    assert data["active"]["usable"] == []
 
 
-def test_cursor_credentials_are_allowed_without_a_key(client):
-    listed = client.get("/api/providers")["data"]["credentials"]
-    cursor = next(item for item in listed if item["name"] == "cursor")
-    assert cursor["configured"] is False
-    saved = client.post("/api/credentials", {"name": "cursor", "value": "cur-optional-key"})
-    assert saved["ok"] is True
-    assert "cur-optional-key" not in json.dumps(saved)
+def test_engines_patch_saves_order_caps_and_behaviour(client, app):
+    result = client.patch("/api/ai/engines", {
+        "order": ["gemini", "openrouter"],
+        "policy": "credits",
+        "cap_behaviour": "switch",
+        "pinned": "gemini",
+        "credits": {"openrouter": {"monthly_usd": 4.5, "monthly_calls": 200}},
+    })
+    assert result["ok"] is True, result
+    data = result["data"]
+    assert data["preference"] == ["gemini", "openrouter"]
+    assert data["policy"] == "credits"
+    assert data["cap_behaviour"] == "switch"
+    assert data["pinned"] == "gemini"
+    assert data["credits"]["openrouter"]["monthly_usd"] == 4.5
+    assert app.config.get("ai.credits.openrouter.monthly_calls") == 200
+    assert app.audit.search("ai_engine_policy_updated") or app.db.query(
+        "SELECT * FROM audit_log WHERE action = 'ai_engine_policy_updated'"
+    )
+
+
+def test_engines_patch_rejects_nonsense(client, app):
+    for body in (
+        {"order": []},
+        {"order": ["grok"]},
+        {"policy": "vibes"},
+        {"cap_behaviour": "spend-anyway"},
+        {"pinned": "fish"},
+        {"credits": {"openrouter": {"monthly_usd": -3}}},
+        {"credits": {"openrouter": {"monthly_calls": "lots"}}},
+        {"credits": {"cursor": {"monthly_usd": 1}}},
+    ):
+        result = client.patch("/api/ai/engines", body)
+        assert result["ok"] is False, body
+        assert result["error"], body
+    assert app.config.get("ai.engine_policy") == "preference"
+
+
+def test_command_accepts_a_per_request_engine(client):
+    rejected = client.post("/api/command", {"text": "hello", "engine": "grok"})
+    assert rejected["ok"] is False
+    assert "engine" in rejected["error"].lower()
+    offline = client.post("/api/command", {"text": "open my documents folder", "engine": "gemini"})
+    assert offline["ok"] is True, offline
+    assert offline["data"]["status"] in ("completed", "failed", "needs_approval")
 
 
 def test_security_scan_reports_real_checks(client, app):

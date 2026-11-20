@@ -66,4 +66,4 @@ Write-Host "Environment check:" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Done. Start RAY with:  .venv\Scripts\python.exe main.py" -ForegroundColor Green
 Write-Host "Or double-click RAY.bat (it uses .venv automatically)."
-Write-Host "Then open Settings -> AI providers and add your Cursor login, Gemini and Fish Audio keys."
+Write-Host "Then open Settings -> AI providers and add an OpenRouter key (one key, many models), optionally Gemini and Fish Audio."

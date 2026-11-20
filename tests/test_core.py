@@ -11,7 +11,7 @@ from ray.core.database import Database
 def test_config_defaults_and_dotted_access(tmp_path):
     config = Config(tmp_path / "config.json")
     assert config.get("ui.port") == DEFAULTS["ui"]["port"]
-    assert config.get("ai.providers.grok.model")
+    assert config.get("ai.providers.openrouter.model")
     assert config.get("does.not.exist", "fallback") == "fallback"
 
 
@@ -116,16 +116,60 @@ def test_table_counts_and_integrity(app):
     assert app.db.size_bytes() > 0
 
 
-def test_config_migrates_the_old_grok_default(tmp_path):
+def test_config_migrates_the_retired_engines(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAY_OPENROUTER_API_KEY", "sk-or-test")
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"ai": {"default_provider": "grok"}}), encoding="utf-8")
+    path.write_text(json.dumps({
+        "ai": {
+            "routing_version": 2,
+            "default_provider": "cursor",
+            "daily_budget": {"cursor": 300, "grok": 300, "gemini": 400},
+            "providers": {
+                "cursor": {"binary": "cursor-agent", "workspace": ""},
+                "grok": {"model": "grok-4"},
+                "gemini": {"model": "gemini-2.5-flash"},
+            },
+        },
+    }), encoding="utf-8")
     config = Config(path)
-    assert config.get("ai.default_provider") == "cursor"
-    assert config.get("ai.routing_version") == 2
-    assert json.loads(path.read_text(encoding="utf-8"))["ai"]["default_provider"] == "cursor"
+    assert config.get("ai.routing_version") == 3
+    assert config.get("ai.engine_order") == ["openrouter", "gemini"]
+    assert config.get("ai.default_provider") is None
+    assert set(config.section("ai.providers")) == {"openrouter", "gemini", "fish"}
+    assert "cursor" not in config.section("ai.daily_budget")
+    assert config.validate() == []
+    saved = json.loads(path.read_text(encoding="utf-8"))["ai"]
+    assert "cursor" not in saved["providers"] and "grok" not in saved["providers"]
 
 
-def test_config_keeps_an_explicit_non_grok_default(tmp_path):
+def test_config_migration_prefers_gemini_when_that_is_all_there_is(tmp_path, monkeypatch):
+    monkeypatch.delenv("RAY_OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("RAY_GEMINI_API_KEY", "AIza-test")
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"ai": {"default_provider": "gemini"}}), encoding="utf-8")
-    assert Config(path).get("ai.default_provider") == "gemini"
+    path.write_text(json.dumps({"ai": {"routing_version": 2, "default_provider": "grok"}}), encoding="utf-8")
+    config = Config(path)
+    assert config.get("ai.engine_order") == ["gemini", "openrouter"]
+    assert config.get("ai.routing_version") == 3
+
+
+def test_config_keeps_an_explicit_engine_order(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "ai": {"routing_version": 2, "default_provider": "grok", "engine_order": ["gemini", "openrouter"]},
+    }), encoding="utf-8")
+    config = Config(path)
+    assert config.get("ai.engine_order") == ["gemini", "openrouter"]
+    assert config.get("ai.pinned_engine") == ""
+    assert config.get("ai.cap_behaviour") == "stop"
+
+
+def test_database_is_at_schema_four_with_usage_cost(tmp_path):
+    from ray.core.database import SCHEMA_VERSION
+
+    db = Database(tmp_path / "legacy.db")
+    db.migrate()
+    assert SCHEMA_VERSION == 4
+    assert db.scalar("PRAGMA user_version") == 4
+    columns = {row["name"] for row in db.query("PRAGMA table_info(usage)")}
+    assert "cost_usd" in columns
