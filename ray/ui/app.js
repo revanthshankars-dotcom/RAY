@@ -8,6 +8,8 @@ const state = {
   providers: null,
   dashboard: null,
   settings: null,
+  userName: '',
+  engines: null,
   section: 'home',
   eventsCursor: 0,
   approvals: [],
@@ -657,6 +659,70 @@ function capLabel(credit) {
   return `${credit.used_calls} of ${calls} calls · ${credit.percent}%`;
 }
 
+/**
+ * The Home monogram: the user's own initials in a glass bubble, the way iOS
+ * draws a contact. Two letters for a full name, one for a single name, and a
+ * time-of-day glyph when no name is set - never a placeholder "R" that belongs
+ * to nobody.
+ */
+function monogram(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+
+/** A stable hue per person (175-275: cyan -> blue -> violet, the RAY palette). */
+function nameHue(name) {
+  const text = String(name || '').trim().toLowerCase();
+  if (!text) return 196;
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 100000;
+  }
+  return 175 + (hash % 100);
+}
+
+function timeOfDayGlyph(date) {
+  const hour = date.getHours();
+  if (hour < 5) return '\u263E';        // moon
+  if (hour < 12) return '\u2600';       // sun
+  if (hour < 17) return '\u26C5';       // sun behind cloud
+  if (hour < 21) return '\u263D';       // crescent
+  return '\u263E';
+}
+
+function fmtMinutes(value) {
+  const minutes = Number(value) || 0;
+  if (!minutes) return '0';
+  if (minutes < 1) return `${Math.round(minutes * 60)} s`;
+  return `${minutes.toFixed(minutes < 10 ? 1 : 0)} min`;
+}
+
+/** Minutes, but honest about short calls ("12 s" rather than "0"). */
+function fmtUsageMinutes(usage) {
+  const seconds = Number(usage?.seconds_used) || 0;
+  if (seconds > 0 && seconds < 60) return `${Math.round(seconds)} s`;
+  return fmtMinutes(Number(usage?.minutes_used) || 0);
+}
+
+/** seconds -> m:ss, for the live-call timer. */
+function fmtClock(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** The same glass bubble, smaller, for the chat log. */
+function bubbleAvatar(who) {
+  if (who === 'user') {
+    const text = monogram(state.userName) || timeOfDayGlyph(new Date());
+    const label = state.userName || 'You';
+    return `<div class="avatar me" style="--me-hue:${nameHue(state.userName)}"
+      role="img" aria-label="${esc(label)}" title="${esc(label)}">${esc(text)}</div>`;
+  }
+  return '<div class="avatar ray" role="img" aria-label="RAY" title="RAY">R</div>';
+}
+
 function describeProvider(name) {
   const list = state.status?.provider_detail?.providers || [];
   return list.find((entry) => entry.name === name) || null;
@@ -984,8 +1050,13 @@ VIEWS.home = async function () {
   const tempPercent = temp.known ? Math.min(100, (temp.celsius / 110) * 100) : 0;
   const warnings = system.warnings || [];
   const name = String(data.user_name || '').trim();
-  const initial = (name || 'R').charAt(0).toUpperCase();
+  state.userName = name;
   const now = new Date();
+  const initials = monogram(name);
+  const hue = nameHue(name);
+  const firstName = name.split(/\s+/).filter(Boolean)[0] || '';
+  const avatarText = initials || timeOfDayGlyph(now);
+  const avatarLabel = name || 'Your day so far';
   const dayPercent = Math.round(((now.getHours() * 60 + now.getMinutes()) / 1440) * 100);
   const policy = security?.policy || data.security || {};
   const pending = (security?.pending || []).length;
@@ -1013,12 +1084,14 @@ VIEWS.home = async function () {
     <section class="home-cmd">
       <div class="card">
         <div class="hero-main">
-          <div class="hero-avatar">${esc(initial)}</div>
-          <div style="min-width:0">
-            <h2>${esc(data.greeting)}${name ? `, ${esc(name)}` : ''}!</h2>
+          <div class="hero-avatar ${initials ? 'has-initials' : 'has-glyph'}"
+               style="--me-hue:${hue}" role="img" aria-label="${esc(avatarLabel)}"
+               title="${esc(avatarLabel)}">${esc(avatarText)}</div>
+          <div class="hero-copy">
+            <h2>${esc(data.greeting)}${firstName ? `, ${esc(firstName)}` : ''}</h2>
             <div class="sub">${esc(data.date_label)} · ${data.tasks_stats.open} open task(s) · ${data.reminders.length} reminder(s) in the next day</div>
             <div class="progress" title="Day ${dayPercent}% elapsed"><i style="width:${dayPercent}%"></i></div>
-            <div class="row wrap" style="margin-top:10px">
+            <div class="row wrap">
               ${engineChip}
               <span class="pill ${online ? 'ok' : 'warn'}">${online ? 'AI connected' : 'offline mode'}</span>
               <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}">${policy.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
@@ -1412,7 +1485,7 @@ function renderChat() {
   const log = $('#chat-log');
   if (!log) return;
   if (!state.chat.length) {
-    log.innerHTML = `<div class="msg"><div class="avatar">R</div><div class="bubble">Ready.
+    log.innerHTML = `<div class="msg">${bubbleAvatar('ray')}<div class="bubble">Ready.
 Try: "summarise the PDF in my Downloads", "what is on my schedule tomorrow", or "open Chrome and search for the Companies Act".
 Without API keys I can still run every local command.</div></div>`;
     return;
@@ -1424,11 +1497,11 @@ Without API keys I can still run every local command.</div></div>`;
           <span class="idx">${outcome.ok ? '✓' : outcome.requires_approval ? '!' : '×'}</span>
           <span><span class="tool">${esc(outcome.tool)}</span> ${esc(outcome.error || outcome.why || '')}</span>
           <span class="faint small">${outcome.duration_ms} ms</span></div>`).join('');
-      return `<div class="msg"><div class="avatar">R</div><div class="bubble">${esc(message.answer || '')}
+      return `<div class="msg">${bubbleAvatar('ray')}<div class="bubble">${esc(message.answer || '')}
         ${steps ? `<div class="steps">${steps}</div>` : ''}
         <div class="faint tiny" style="margin-top:8px">${esc(message.agent)} · ${message.duration_ms} ms · ${esc(message.status)}</div></div></div>`;
     }
-    return `<div class="msg ${message.role}"><div class="avatar">${message.role === 'user' ? 'You' : 'R'}</div>
+    return `<div class="msg ${message.role}">${bubbleAvatar(message.role === 'user' ? 'user' : 'ray')}
       <div class="bubble">${esc(message.content)}</div></div>`;
   }).join('');
   log.scrollTop = log.scrollHeight;
@@ -1463,8 +1536,14 @@ async function sendChat(text) {
 
 /* ------------------------------------------------------------------ voice */
 VIEWS.voice = async function () {
-  const status = await api('/api/voice/status');
+  const [status, live] = await Promise.all([
+    api('/api/voice/status'),
+    api('/api/voice/agent').catch(() => null),
+  ]);
   const config = state.settings?.config?.voice || {};
+  const usage = live?.usage || {};
+  const overCap = Boolean(usage.over_cap);
+  const liveReady = Boolean(live?.enabled && live?.configured);
   view().innerHTML = `
     <div class="grid cols-2" style="align-items:start">
       <div class="card">
@@ -1506,6 +1585,57 @@ VIEWS.voice = async function () {
           </div>
           <button class="btn" id="load-voices">Load my Fish Audio voices</button>
           <div id="voices"></div>
+        </div>
+      </div>
+      <div class="card" style="grid-column:1/-1" id="live-card">
+        <div class="card-head">
+          <h2>Live call</h2><span class="spacer"></span>
+          <span class="pill ${liveReady ? 'ok' : 'warn'}">${liveReady ? 'Fish agent ready' : live?.configured ? 'agent set, calls off' : 'no agent id yet'}</span>
+        </div>
+        <p class="muted small" style="margin:0 0 12px">
+          Talk to your Fish Audio agent in real time. The audio goes straight from this browser to
+          Fish over WebRTC - R<span class="faint">AY</span> never sees or records it.
+        </p>
+        <div class="grid cols-2" style="align-items:start">
+          <div class="col">
+            <label class="field"><span>Fish agent id</span>
+              <input type="text" id="live-agent-id" value="${esc(live?.agent_id || '')}"
+                     placeholder="d9c5173d… from your Fish agent's embed snippet" spellcheck="false" />
+            </label>
+            <label class="field"><span>Monthly minutes budget (RAY warns, never blocks)</span>
+              <input type="number" id="live-cap" min="1" max="6000" value="${esc(String(live?.cap_minutes ?? 30))}" />
+            </label>
+            <label class="switch"><input type="checkbox" id="live-enabled" ${live?.enabled ? 'checked' : ''}>
+              <span class="track"></span>Allow live calls</label>
+            <div class="row">
+              <button class="btn primary" id="save-live">Save</button>
+              <button class="btn" id="start-live" ${liveReady ? '' : 'disabled'}>Start live call</button>
+              <button class="btn ghost" id="end-live" hidden>End call</button>
+            </div>
+            <div class="faint small" id="live-status">${liveReady ? 'Ready when you are.' : 'Add an agent id and switch live calls on to start.'}</div>
+          </div>
+          <div class="col">
+            <div class="row" style="justify-content:space-between;align-items:baseline">
+              <span class="small muted">This month</span>
+              <span class="mono" id="live-timer" style="font-size:22px;letter-spacing:-0.02em">0:00</span>
+            </div>
+            <div class="progress" style="margin-top:8px"><i style="width:${usage.percent || 0}%"></i></div>
+            <div class="small ${overCap ? 'warn' : 'faint'}" id="live-usage" style="margin-top:6px">
+              ${fmtUsageMinutes(usage)} of ${usage.cap_minutes || 0} min used · ${usage.calls || 0} call${usage.calls === 1 ? '' : 's'}
+              ${overCap ? ' · over budget, calls still allowed' : ''}
+            </div>
+            <div class="banner small" ${overCap ? '' : 'hidden'} id="live-warn">
+              You are ${fmtMinutes(Math.max(0, (usage.minutes_used || 0) - (usage.cap_minutes || 0)))} over the budget you set.
+              Fish bills these minutes on your account; RAY only counts them.
+            </div>
+            <div class="banner info small" style="margin-top:10px">
+              Your Fish agent must be <strong>public</strong> with this page's origin
+              (<span class="mono">${esc(location.origin)}</span>) on its allowlist, or Fish refuses the session.
+              The microphone is requested only when you start a call, and only a browser tab with
+              microphone permission can connect.
+            </div>
+            <div id="live-stage" class="live-stage"></div>
+          </div>
         </div>
       </div>
     </div>`;
@@ -1596,7 +1726,187 @@ VIEWS.voice = async function () {
       box.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
     }
   });
+
+  // ---------------------------------------------------------------- live call
+  // The widget is loaded from RAY's own disk (/assets/fish-agent-widget.js),
+  // only after you press Start - so nothing third-party runs while you browse,
+  // and the page stays fully usable offline until you ask for a call.
+  if (live) bindLiveCall(live);
 };
+
+/** Mount the Fish <fish-agent> element and keep honest time on it. */
+function bindLiveCall(initial) {
+  const holder = $('#live-stage');
+  if (!holder) return;
+  const timerNode = $('#live-timer');
+  const usageNode = $('#live-usage');
+  const warnNode = $('#live-warn');
+  const statusNode = $('#live-status');
+  const startBtn = $('#start-live');
+  const endBtn = $('#end-live');
+  let usage = initial.usage || {};
+  let startedAt = 0;
+  let ticking = null;
+  let recorded = false;
+
+  const paintUsage = (next) => {
+    if (!next) return;
+    usage = next;
+    const over = Boolean(usage.over_cap);
+    if (usageNode) {
+      usageNode.className = `small ${over ? 'warn' : 'faint'}`;
+      usageNode.textContent = `${fmtUsageMinutes(usage)} of ${usage.cap_minutes} min used · `
+        + `${usage.calls} call${usage.calls === 1 ? '' : 's'}${over ? ' · over budget, calls still allowed' : ''}`;
+    }
+    const bar = $('#live-card .progress i');
+    if (bar) bar.style.width = `${usage.percent || 0}%`;
+    if (warnNode) {
+      warnNode.hidden = !over;
+      if (over) {
+        warnNode.textContent = `You are ${fmtMinutes(Math.max(0, usage.minutes_used - usage.cap_minutes))} over the `
+          + 'budget you set. Fish bills these minutes on your account; RAY only counts them.';
+      }
+    }
+  };
+
+  const tick = () => {
+    if (timerNode) timerNode.textContent = fmtClock((Date.now() - startedAt) / 1000);
+  };
+
+  /** Write the finished call to RAY's local ledger (never blocks, never retries loudly). */
+  const record = async () => {
+    if (!startedAt || recorded) return;
+    recorded = true;
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    startedAt = 0;
+    if (ticking) { clearInterval(ticking); ticking = null; }
+    try {
+      const next = await api('/api/voice/agent/session', {
+        method: 'POST', body: { seconds, note: 'live agent call' },
+      });
+      paintUsage(next);
+      if (next.over_cap) {
+        toast('Over your voice budget', `${fmtUsageMinutes(next)} of ${next.cap_minutes} min this month. `
+          + 'Calls are still allowed - Fish bills the minutes.', 'warn', 8000);
+      }
+    } catch (error) {
+      toast('Call not recorded', error.message, 'error');
+    }
+    if (timerNode) timerNode.textContent = fmtClock(seconds);
+  };
+
+  const endCall = () => {
+    holder.innerHTML = '';
+    if (endBtn) endBtn.hidden = true;
+    if (startBtn) startBtn.disabled = !(initial.enabled && initial.configured);
+    if (statusNode) statusNode.textContent = 'Call ended.';
+    record();
+  };
+
+  const loadScript = () => new Promise((resolve, reject) => {
+    if (window.customElements?.get('fish-agent')) return resolve();
+    const existing = document.querySelector('script[data-ray-fish-agent]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('the widget file could not be loaded')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = initial.script || '/assets/fish-agent-widget.js';
+    script.async = true;
+    script.dataset.rayFishAgent = '1';
+    script.addEventListener('load', () => resolve());
+    script.addEventListener('error', () => reject(new Error('the widget file could not be loaded')));
+    document.head.appendChild(script);
+    return undefined;
+  });
+
+  if (startBtn) {
+    startBtn.addEventListener('click', async () => {
+      if (!initial.enabled || !initial.configured) {
+        toast('No agent yet', 'Save a Fish agent id and switch live calls on first.', 'warn');
+        return;
+      }
+      startBtn.disabled = true;
+      if (statusNode) statusNode.textContent = 'Loading the agent…';
+      try {
+        await loadScript();
+      } catch (error) {
+        startBtn.disabled = false;
+        if (statusNode) statusNode.textContent = '';
+        toast('Could not load the widget', error.message, 'error');
+        return;
+      }
+      recorded = false;
+      holder.innerHTML = `<fish-agent agent-id="${esc(initial.agent_id)}"
+        consent="1" consent-text="RAY will connect you to your Fish Audio agent. Audio leaves this browser."
+        transcript="1" mic-muting="1"></fish-agent>`;
+      if (endBtn) endBtn.hidden = false;
+      if (statusNode) statusNode.textContent = 'Connecting… allow the microphone when the browser asks.';
+      const element = holder.querySelector('fish-agent');
+      // the widget dispatches these itself; we never guess the call state
+      element.addEventListener('fish-agent:call', () => {
+        startedAt = Date.now();
+        recorded = false;
+        ticking = setInterval(tick, 1000);
+        if (statusNode) statusNode.textContent = 'Live. Speak normally; end the call when you are done.';
+      });
+      element.addEventListener('fish-agent:connect', () => {
+        if (statusNode) statusNode.textContent = 'Connected to your Fish agent.';
+      });
+      element.addEventListener('fish-agent:disconnect', () => {
+        if (statusNode) statusNode.textContent = 'Call ended.';
+        if (endBtn) endBtn.hidden = true;
+        record();
+      });
+      element.addEventListener('fish-agent:error', (event) => {
+        const code = event?.detail?.code || 'connection_failed';
+        const hint = code === 'mic_permission_denied'
+          ? 'The browser blocked the microphone. Allow it for this page and try again.'
+          : code === 'origin_forbidden' || code === 'agent_not_public'
+            ? `Fish refused this page's origin (${location.origin}). Add it to the agent's allowlist and make the agent public.`
+            : 'The call could not connect. Check your network and the agent id.';
+        if (statusNode) statusNode.textContent = hint;
+        startBtn.disabled = false;
+        record();
+      });
+    });
+  }
+
+  if (endBtn) endBtn.addEventListener('click', endCall);
+
+  const saveBtn = $('#save-live');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async () => {
+      try {
+        const next = await api('/api/voice/agent', {
+          method: 'POST',
+          body: {
+            agent_id: $('#live-agent-id').value.trim(),
+            cap_minutes: Number($('#live-cap').value),
+            enabled: $('#live-enabled').checked,
+          },
+        });
+        initial.enabled = next.enabled;
+        initial.configured = next.configured;
+        initial.agent_id = next.agent_id;
+        paintUsage(next.usage);
+        if (startBtn) startBtn.disabled = !(next.enabled && next.configured);
+        toast('Saved', next.enabled ? 'Live calls are on.' : 'Live calls are off.', 'ok');
+      } catch (error) { toast('Could not save', error.message, 'error', 7000); }
+    });
+  }
+
+  const enabled = $('#live-enabled');
+  if (enabled) {
+    enabled.addEventListener('change', () => {
+      if (enabled.checked && !$('#live-agent-id').value.trim()) {
+        enabled.checked = false;
+        toast('Add the agent id first', 'Copy it from the embed snippet on your Fish agent page.', 'warn');
+      }
+    });
+  }
+}
 
 /* --------------------------------------------------------------- computer */
 VIEWS.computer = async function () {
@@ -2771,6 +3081,7 @@ VIEWS.settings = async function () {
   state.settings = settings;
   state.engines = engines;
   if (state.section !== 'settings') return;
+  state.userName = String(settings.config.app.user_name || '').trim();
   const config = settings.config;
   const credentials = providers.credentials;
   view().innerHTML = `
@@ -2941,6 +3252,11 @@ VIEWS.settings = async function () {
           <label class="field"><span>Volume</span><input type="number" step="0.05" min="0" max="1" id="set-voice-volume" value="${config.voice.volume}" /></label>
           <label class="switch"><input type="checkbox" id="set-voice-auto" ${config.voice.auto_speak ? 'checked' : ''}><span class="track"></span>Speak replies automatically</label>
           <label class="switch"><input type="checkbox" id="set-voice-wake" ${config.voice.wake_word_enabled ? 'checked' : ''}><span class="track"></span>Wake word while the Voice page is open</label>
+          <div class="banner info small">
+            Live conversations with a Fish Audio agent are set up on the
+            <button class="linkish" data-act="go" data-section="voice">Voice page</button> - agent id,
+            monthly budget and the Start button live there.
+          </div>
           <button class="btn primary" id="save-voice">Save</button>
         </div>
       </div>`,
@@ -3418,8 +3734,10 @@ function openApprovalDialog() {
 
 /* -------------------------------------------------------------- bootstrap */
 async function refreshStatus() {
+  // (the same call also tells us whose monogram the UI should draw)
   try {
     state.status = await api('/api/status');
+    if (!state.userName) state.userName = String(state.status.user_name || '');
     const providers = state.status.providers || {};
     const online = Object.values(providers).some((provider) => provider.available);
     const configured = Object.values(providers).some((provider) => provider.configured);

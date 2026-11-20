@@ -81,6 +81,24 @@ for (const section of sections) {
   }
 }
 
+// the Home monogram: initials when a name is set, a time-of-day glyph otherwise
+try {
+  await window.eval("go('home')");
+  await sleep(1200);
+  const avatar = window.document.querySelector('.hero-avatar');
+  const text = (avatar?.textContent || '').trim();
+  const initials = avatar?.classList.contains('has-initials');
+  const glyph = avatar?.classList.contains('has-glyph');
+  const tinted = Boolean(avatar?.style.getPropertyValue('--me-hue'));
+  const ok = Boolean(avatar) && tinted && ((initials && /^[A-Z]{1,2}$/.test(text)) || (glyph && text.length === 1));
+  console.log(ok ? `ok   home monogram (${text}, hue ${avatar.style.getPropertyValue('--me-hue')})`
+    : `FAIL home monogram (text=${JSON.stringify(text)} initials=${initials} glyph=${glyph} tinted=${tinted})`);
+  if (!ok) failures += 1;
+} catch (error) {
+  failures += 1;
+  console.log(`FAIL home monogram: ${error.message}`);
+}
+
 // interactions the user actually performs
 errors.length = 0;
 try {
@@ -109,6 +127,23 @@ try {
 } catch (error) {
   failures += 1;
   console.log(`FAIL settings: ${error.message}`);
+}
+
+// the Fish live-agent panel must exist, must not load the widget until asked,
+// and must never claim minutes it has not recorded
+try {
+  await window.eval("go('voice')");
+  await sleep(900);
+  const card = window.document.querySelector('#live-card');
+  const scriptLoaded = Boolean(window.document.querySelector('script[data-ray-fish-agent]'));
+  const usage = (window.document.querySelector('#live-usage')?.textContent || '').replace(/\s+/g, ' ').trim();
+  const hasFields = Boolean(window.document.querySelector('#live-agent-id'));
+  const ok = Boolean(card) && hasFields && !scriptLoaded && /min used . \d+ call/.test(usage);
+  console.log(ok ? `ok   live voice panel (${usage})` : `FAIL live voice panel (card=${Boolean(card)} fields=${hasFields} script=${scriptLoaded} usage="${usage}")`);
+  if (!ok) failures += 1;
+} catch (error) {
+  failures += 1;
+  console.log(`FAIL live voice panel: ${error.message}`);
 }
 
 try {

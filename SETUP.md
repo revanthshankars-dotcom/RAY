@@ -114,7 +114,7 @@ Checks in the codespace terminal:
 
 ```bash
 python main.py --check     # python, packages, data home, which providers are configured
-python -m pytest -q        # 266 tests, offline
+python -m pytest -q        # 275 tests, offline
 ```
 
 **What a Linux codespace can and cannot do.** It can plan, chat, research, read
@@ -265,6 +265,35 @@ Rules that matter:
 
 ---
 
+## E. Live calls with your own Fish Audio agent (optional)
+
+RAY can hand the microphone to a **Fish Audio voice agent** for a real conversation
+instead of one-shot text-to-speech. You need an agent of your own; RAY ships none.
+
+1. In the Fish Audio dashboard create an agent, make it **public**, and add RAY's
+   origin to its allowlist — `http://127.0.0.1:8765` locally, or
+   `http://localhost:8765`, and the exact origin of your Codespaces preview if you
+   use one. Fish refuses the session otherwise, and RAY will say so.
+2. Copy the agent id out of the embed snippet (`<fish-agent agent-id="…">`).
+3. In RAY: **Voice → Live call** → paste the id → set a monthly minutes budget →
+   tick *Allow live calls* → **Save** → **Start live call**.
+
+What you are agreeing to, in plain words:
+
+| Fact | Why it matters |
+| --- | --- |
+| The audio goes **browser → Fish** over WebRTC | RAY does not relay, decrypt or record it; it is not in your local history |
+| Fish bills those minutes to **your** account | RAY cannot meter the call the way it meters tokens, so it counts the call timer and compares it with your budget |
+| The budget **warns, never blocks** | you asked for a warning; the pill turns amber and the usage line says how far over you are |
+| Every call is written to the local audit log (`voice_agent_session`) | you can see minutes per month in Security → audit |
+| The widget file is RAY's own copy (MIT), loaded only when you press Start | no CDN, and no third-party code runs while you browse |
+| A browser tab must have microphone permission | the in-app preview pane inside a sandboxed iframe may refuse it — open `http://localhost:8765` in a normal tab for calls |
+
+Nothing here is required for the rest of RAY, and with no agent id the panel simply
+says so.
+
+---
+
 ## Plain-English commands (no provider required)
 
 | You say | RAY does |
@@ -293,13 +322,17 @@ that is what OpenRouter and Gemini are for. RAY says so instead of guessing.
 
 ## First five minutes
 
-1. Say **"help"** — you should get the capability list, not an error.
-2. Say **"how much ram am i using"** — real numbers from this machine.
-3. Say **"remind me in 20 minutes to stretch"** — check Reminders.
-4. **Settings → AI providers** → add Gemini, press **Test**.
-5. Say **"open my downloads"** (local install) or **"index status"**.
-6. **Security → Run full check** — 13/13 checks, warnings only for deliberate
-   network exposure.
+1. **Settings → General → Your name** — RAY draws your initials in the glass
+   bubble on Home ("Revanth Shankar" → `RS`) and tints it from a hue derived
+   from the name, so the interface is yours on every launch. With no name it
+   shows the time of day instead of a placeholder letter.
+2. Say **"help"** — you should get the capability list, not an error.
+3. Say **"how much ram am i using"** — real numbers from this machine.
+4. Say **"remind me in 20 minutes to stretch"** — check Reminders.
+5. **Settings → AI providers** → add OpenRouter (or Gemini), press **Test**.
+6. Say **"open my downloads"** (local install) or **"index status"**.
+7. **Security → Run full check** — every check passes; warnings only for
+   deliberate network exposure.
 
 ---
 

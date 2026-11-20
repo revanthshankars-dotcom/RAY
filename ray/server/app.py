@@ -121,8 +121,16 @@ def _make_handler(app):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header(
                 "Content-Security-Policy",
+                # The one deliberate exception: the Fish Audio live agent opens a
+                # WebRTC call from this page, so the browser must reach Fish's API
+                # for a session token and LiveKit for the signalling socket. The
+                # widget script itself is served from disk - no CDN, no script-src
+                # relaxation. Everything else stays same-origin (see SECURITY.md).
                 "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self'; "
+                "img-src 'self' data: blob:; media-src 'self' blob: data:; "
+                "worker-src 'self' blob:; connect-src 'self' https://api.fish.audio "
+                "wss://*.livekit.cloud https://*.livekit.cloud "
+                "wss://*.livekit.run https://*.livekit.run; "
                 "object-src 'none'; base-uri 'none'; form-action 'none'",
             )
             for key, value in (extra or {}).items():
@@ -1282,6 +1290,42 @@ def voice_status(app, **_: Any) -> Any:
             "note": "Wake word listens only while the Voice section is open and the toggle is on.",
         },
     }
+
+
+@route("GET", "/api/voice/agent")
+def voice_agent_status(app, **_: Any) -> Any:
+    """The Fish live-agent panel: settings, usage and the honest caveats."""
+    return app.voice_agent.describe()
+
+
+@route("POST", "/api/voice/agent")
+def voice_agent_save(app, body=None, **_: Any) -> Any:
+    body = body or {}
+    try:
+        return app.voice_agent.save(
+            enabled=body.get("enabled"),
+            agent_id=body.get("agent_id"),
+            cap_minutes=body.get("cap_minutes"),
+        )
+    except ValueError as exc:
+        raise ApiError(str(exc), 400) from exc
+
+
+@route("POST", "/api/voice/agent/session")
+def voice_agent_session(app, body=None, **_: Any) -> Any:
+    """Record a finished call. A call is never refused - the budget only warns."""
+    body = body or {}
+    try:
+        usage = app.voice_agent.record_session(
+            body.get("seconds", 0),
+            started_at=str(body.get("started_at", "") or ""),
+            note=str(body.get("note", "") or ""),
+        )
+    except ValueError as exc:
+        raise ApiError(str(exc), 400) from exc
+    if usage["over_cap"]:
+        app.bus.publish("voice_agent_over_cap", minutes_used=usage["minutes_used"], cap_minutes=usage["cap_minutes"])
+    return usage
 
 
 @route("POST", "/api/voice/transcribe")

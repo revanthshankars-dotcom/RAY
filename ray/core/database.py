@@ -26,7 +26,7 @@ from ..core.logging_setup import get_logger
 
 log = get_logger("core.database")
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_STATEMENTS: list[str] = [
     # ---------------------------------------------------------- productivity
@@ -188,6 +188,16 @@ SCHEMA_STATEMENTS: list[str] = [
         trigger TEXT DEFAULT 'manual',
         detail TEXT DEFAULT ''
     )""",
+    # --------------------------------------------------------------- voice
+    """CREATE TABLE IF NOT EXISTS voice_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at TEXT NOT NULL,
+        ended_at TEXT NOT NULL,
+        seconds REAL DEFAULT 0,
+        agent_id TEXT DEFAULT '',
+        note TEXT DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_voice_sessions_start ON voice_sessions(started_at)",
     # ----------------------------------------------------------- security
     """CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

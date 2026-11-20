@@ -7,8 +7,11 @@ automation — through a validated command layer instead of pretending.
 
 - **Engine**: Python 3.10+, SQLite (WAL) + FTS5, standard library HTTP server.
 - **Interface**: its own window (PySide6/QtWebEngine) showing a local web UI
-  served at `127.0.0.1:8765`. No build step, no external assets, no CDN. The
-  Home screen is a command centre: greeting and day progress, a live RAY orb,
+  served at `127.0.0.1:8765`. No build step, no CDN, no external assets — the
+  one bundled third-party file is the Fish Audio voice-agent widget
+  (`ray/ui/assets/`, MIT), served from disk and loaded only when you start a call. The
+  Home screen is a command centre: your initials in a translucent glass bubble
+  (iOS-style monogram, tinted from your own name), a greeting and day progress, a live RAY orb,
   CPU/RAM/disk/temperature rings with network rate and uptime, an inline
   assistant (Chat / Research / Analyse), today's schedule, quick tools, a
   tile for every section, a real security scan, automation & agents, recent
@@ -163,7 +166,7 @@ See [`SETUP.md`](SETUP.md#plain-english-commands-no-provider-required).
 | --- | --- |
 | **Home** | Greeting, date, live CPU/RAM/disk, today's schedule, tasks, reminders, recent files/apps, automation status, security state |
 | **Assistant** | Chat with provider routing; memory context; plans that run tools and show each step |
-| **Voice** | Microphone selection, push-to-talk or wake word (browser speech recognition), Fish Audio playback, visible mic state, stop button |
+| **Voice** | Microphone selection, push-to-talk or wake word (browser speech recognition), Fish Audio playback, visible mic state, stop button; **live calls** with your own Fish Audio agent (browser↔Fish WebRTC, RAY counts the minutes against a budget you set and warns — it never blocks) |
 | **Computer** | Launch/close apps, volume, brightness, screenshots, clipboard, keyboard/mouse (approval-gated), power actions with confirmation |
 | **Files** | Browse, search (indexed or live), open, reveal, create folder, rename, copy, move, plan/apply Downloads tidy-up, verified zip backups, duplicate and large-file reports |
 | **Browser** | Web search, read a page, research with citations saved as a report — clearly separates fetched text from AI commentary |
