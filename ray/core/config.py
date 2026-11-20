@@ -48,8 +48,8 @@ DEFAULTS: dict[str, Any] = {
         ],
     },
     "ai": {
-        # routing_version 3 = OpenRouter replaces the Cursor CLI + Grok.
-        "routing_version": 3,
+        # routing_version 4 = Ollama joins as an offline/local fallback.
+        "routing_version": 4,
         "stream": False,
         "cache_ttl_seconds": 1800,
         "request_timeout_seconds": 60,
@@ -60,6 +60,10 @@ DEFAULTS: dict[str, Any] = {
         # manual: only the pinned engine, never fall back on our own.
         "engine_policy": "preference",
         "engine_order": ["openrouter", "gemini"],
+        # When every cloud engine fails (no key, no credit, no internet), let the
+        # local Ollama daemon answer instead of handing back an error. It costs
+        # nothing and never leaves the machine.
+        "local_fallback": True,
         "pinned_engine": "",
         # stop: say which cap was hit; switch: move to the next engine and log it.
         "cap_behaviour": "stop",
@@ -67,8 +71,10 @@ DEFAULTS: dict[str, Any] = {
         "credits": {
             "openrouter": {"monthly_usd": 0, "monthly_calls": 0},
             "gemini": {"monthly_usd": 0, "monthly_calls": 0},
+            # a local model costs nothing; the cap exists so the list is complete
+            "ollama": {"monthly_usd": 0, "monthly_calls": 0},
         },
-        "daily_budget": {"openrouter": 300, "gemini": 400, "fish": 300},
+        "daily_budget": {"openrouter": 300, "gemini": 400, "fish": 300, "ollama": 0},
         "providers": {
             "openrouter": {
                 "enabled": True,
@@ -85,6 +91,22 @@ DEFAULTS: dict[str, Any] = {
                 "model": "gemini-2.5-flash",
                 "base_url": "https://generativelanguage.googleapis.com/v1beta",
                 "max_tokens": 1600,
+            },
+            "ollama": {
+                # No key, no account: this is a daemon on your own machine.
+                # Turn it on and RAY can answer with the internet unplugged.
+                "enabled": True,
+                # Empty = use the first model the daemon reports. Otherwise name
+                # one exactly as `ollama list` shows it, e.g. "llama3.2:3b".
+                "model": "",
+                "base_url": "http://127.0.0.1:11434",
+                # local models are slow to first token; be patient once
+                "timeout": 120,
+                "max_tokens": 1024,
+                "temperature": 0.4,
+                # Function calling is unreliable on small local models. Leave
+                # this off and planning keeps using a cloud engine.
+                "tools": False,
             },
             "fish": {
                 "enabled": True,
@@ -181,7 +203,9 @@ def _deep_merge(base: dict, override: dict) -> dict:
 # Providers whose model slug may legitimately be blank (none today: OpenRouter
 # and Gemini both need a slug, Fish has a default). Kept as a hook for adapters
 # that discover their model at runtime.
-MODEL_OPTIONAL_PROVIDERS: set[str] = set()
+# Providers where an empty model is a valid, meaningful choice rather than a
+# half-finished setup: Ollama's "" means "use whatever model is installed".
+MODEL_OPTIONAL_PROVIDERS: set[str] = {"ollama"}
 
 
 class Config:
@@ -259,6 +283,32 @@ class Config:
                 ]
             ai.pop("default_provider", None)
             ai["routing_version"] = 3
+            changed = True
+        if version < 4:
+            # v4: Ollama is a local engine, not an account. Existing configs get
+            # the block (enabled, so a machine with Ollama starts working), the
+            # credit row, and the local-fallback switch - but their engine order
+            # is left exactly as they set it.
+            providers = ai.setdefault("providers", {})
+            if isinstance(providers, dict) and "ollama" not in providers:
+                providers["ollama"] = {
+                    "enabled": True,
+                    "model": "",
+                    "base_url": "http://127.0.0.1:11434",
+                    "timeout": 120,
+                    "max_tokens": 1024,
+                    "temperature": 0.4,
+                    "tools": False,
+                }
+            credits = ai.setdefault("credits", {})
+            if isinstance(credits, dict):
+                credits.setdefault("ollama", {"monthly_usd": 0, "monthly_calls": 0})
+            budget = ai.setdefault("daily_budget", {})
+            if isinstance(budget, dict):
+                budget.setdefault("ollama", 0)
+            if "local_fallback" not in ai:
+                ai["local_fallback"] = True
+            ai["routing_version"] = 4
             changed = True
         return changed
 

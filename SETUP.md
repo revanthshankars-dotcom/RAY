@@ -114,7 +114,7 @@ Checks in the codespace terminal:
 
 ```bash
 python main.py --check     # python, packages, data home, which providers are configured
-python -m pytest -q        # 277 tests, offline
+python -m pytest -q        # 294 tests, offline
 ```
 
 **What a Linux codespace can and cannot do.** It can plan, chat, research, read
@@ -293,6 +293,100 @@ What you are agreeing to, in plain words:
 
 Nothing here is required for the rest of RAY, and with no agent id the panel simply
 says so.
+
+---
+
+## F. Run fully local (no internet, no keys)
+
+This is the setup to use when you want RAY to work on a plane, behind a firewall,
+or on a machine whose cloud budget is zero. Two pieces: a local model for thinking,
+and the operating system's own voice for speaking.
+
+### 1. A local model with Ollama
+
+Install Ollama once — <https://ollama.com/download> (Windows, macOS, Linux). Then:
+
+```bash
+ollama pull llama3.2:3b     # ~2 GB. Any model you prefer works: qwen2.5:7b, mistral, phi4
+ollama list                 # confirm the name and size
+```
+
+Ollama runs a daemon on `http://127.0.0.1:11434` — on Windows and macOS the
+installer starts it for you; on Linux run `ollama serve` (or enable the service).
+
+In RAY: **Settings → AI providers** →
+
+| Field | Value |
+| --- | --- |
+| Ollama model | `llama3.2:3b` (leave it blank to use whatever is installed) |
+| Ollama address | `http://127.0.0.1:11434` |
+| Fall back to Ollama when the internet, a key or the credit runs out | **on** (default) |
+| Test all providers | should report `ollama: connected · local · llama3.2:3b` |
+
+Then press **Save models**. From that moment RAY answers from this machine when
+OpenRouter and Gemini cannot: no key, no credit, no connection. The engine change
+is written to the audit log (`ai_engine_switch`, `openrouter → ollama`) so you can
+always see when the local model took over.
+
+Three honest notes:
+
+* **Ollama is last, not first.** Cloud engines stay preferred while they work, so
+  answers stay fast and good; local is the safety net. If you want local *first*,
+  drag Ollama to the top of the engine order in Settings — it is the same list.
+* **It is slower.** A 3B model on a laptop answers in seconds, not milliseconds,
+  and it is weaker at long, structured work. That is the trade for costing nothing.
+* **Planning still uses a cloud engine.** Small local models are unreliable at
+  tool calling, so RAY does not let Ollama write tool calls unless you enable
+  `ai.providers.ollama.tools`. Ordinary chat, drafting and questions work offline;
+  "open Chrome and search for X" needs a cloud engine online.
+
+### 2. A local voice (no Fish key needed)
+
+RAY speaks with whatever the operating system already ships:
+
+| System | Engine | Nothing to install? |
+| --- | --- | --- |
+| Windows | SAPI 5 through PowerShell | yes — it is part of Windows |
+| macOS | `/usr/bin/say` | yes |
+| Linux | `espeak-ng`, `espeak` or `pico2wave` | no — `sudo apt install espeak-ng` (Debian/Ubuntu) or `sudo dnf install espeak-ng` (Fedora) |
+
+**Voice page → Say something → Speak.** If Fish Audio has no key or the request
+fails, RAY speaks locally and tells you so in a toast ("Spoken locally… nothing was
+uploaded"). With neither engine available the panel says exactly what to install
+instead of failing silently.
+
+### 3. Start it, fully offline
+
+```bash
+RAY_HOME="$HOME/.ray" python3 main.py --headless --host 127.0.0.1 --port 8090 --no-open
+```
+
+Open <http://127.0.0.1:8090>. Working without a network:
+
+| Works offline | Needs the internet |
+| --- | --- |
+| Chat, questions, drafting (with Ollama running) | Better answers, long documents, images (cloud engines) |
+| Spoken replies (local voice) | Fish Audio voices, live Fish agent calls |
+| Files, search/index, tasks, notes, calendar, reminders | Web search, page reading, research |
+| System monitor, app launcher, automation, security scan | Cloud backups you configure yourself |
+
+Check it honestly at any time:
+
+```bash
+python main.py --check                       # what is installed and configured
+curl -s localhost:8090/api/ai/engines | head # order, health and the reason for each block
+```
+
+### Troubleshooting, locally
+
+| Symptom | Meaning | Fix |
+| --- | --- | --- |
+| `Ollama is not answering on http://127.0.0.1:11434` | the daemon is not running | `ollama serve` (Linux) or start the Ollama app |
+| `Ollama is running but has no models` | nothing pulled yet | `ollama pull llama3.2:3b` |
+| `'qwen2.5:7b' is not installed` | the model name in Settings does not match `ollama list` | fix the name, or blank it |
+| Answers are slow | the model is bigger than the machine | use a smaller tag (`llama3.2:1b`, `phi3:mini`) |
+| `No local speech engine found` | Linux without espeak | `sudo apt install espeak-ng` |
+| Everything offline and no answer | Ollama off and no cloud key | start Ollama, or add a key |
 
 ---
 

@@ -471,6 +471,28 @@ lock yourself) and confirm RAY still starts offline.
 
 ---
 
+## Clause 18b — What stays on this machine
+
+**Rule.** RAY MUST have at least one engine that sends nothing off the device:
+Ollama over loopback (`http://127.0.0.1:11434`), which needs no key, is metered at
+zero cost, and is probed rather than assumed (`ray/ai/ollama.py`). Speech MUST NOT
+require a cloud key: when Fish Audio is absent or fails, RAY speaks with the
+operating system's own voice and says which engine it used (`ray/media/local_tts.py`).
+Neither path writes audio or prompts to a remote service, and neither is presented
+as cloud quality.
+
+**Why.** "Local-first" is a claim a user checks when their connection drops. If
+every answer needed a key, the claim would be false the moment it mattered.
+
+**Enforced by.** `ray/ai/policy.py` (`LOCAL_ENGINES`, appended as the last resort
+unless `ai.local_fallback` is off), `ray/ai/router.py` (`route_for` appends the
+local engine, and the switch to it is audited), `ray/media/local_tts.py` (no
+network calls at all), `tests/test_ai.py` and `tests/test_local_voice.py`.
+
+**Verify.** Unplug the network with Ollama running and no cloud keys: chat still
+answers and the audit log shows `ai_engine_switch openrouter -> ollama`. Ask RAY to
+speak: audio plays, with `X-Audio-Engine: local` on the response.
+
 ## Clause 19 — The UI renders untrusted data as text
 
 **Rule.** Every string that reaches the DOM MUST pass through `esc()` unless it

@@ -120,13 +120,36 @@ try {
   await sleep(600);
   const hasCredentials = window.document.querySelector('#cred-openrouter') !== null;
   const hasEngines = window.document.querySelector('#engine-list [data-engine]') !== null;
-  const ok = hasCredentials && hasEngines;
-  console.log(ok ? 'ok   settings credential + engine inputs'
-    : `FAIL settings inputs (credentials=${hasCredentials} engines=${hasEngines})`);
+  // the local engine is configured by address + model, never by a key
+  const hasOllama = window.document.querySelector('#model-ollama') !== null
+    && window.document.querySelector('#model-ollama-host') !== null
+    && window.document.querySelector('#local-fallback') !== null
+    && window.document.querySelector('#cred-ollama') === null;
+  const ok = hasCredentials && hasEngines && hasOllama;
+  console.log(ok ? 'ok   settings credential + engine inputs (incl. local Ollama, no key field)'
+    : `FAIL settings inputs (credentials=${hasCredentials} engines=${hasEngines} ollama=${hasOllama})`);
   if (!ok) failures += 1;
 } catch (error) {
   failures += 1;
   console.log(`FAIL settings: ${error.message}`);
+}
+
+// speech must not depend on a cloud key: the Voice page has to name the engine
+try {
+  await window.eval("go('voice')");
+  await sleep(900);
+  const status = await (await fetch(`${base}/api/voice/status`)).json();
+  const engine = status.data.speech_engine;
+  const pill = [...window.document.querySelectorAll('.card .pill')].map((n) => n.textContent.trim()).join(' | ');
+  const named = Boolean(engine) && engine !== 'none'
+    ? pill.toLowerCase().includes(String(engine).toLowerCase().slice(0, 6)) || pill.includes('Fish Audio ready')
+    : pill.includes('No voice engine');
+  console.log(named ? `ok   voice engine named (${engine || 'none'}: ${pill.slice(0, 60)})`
+    : `FAIL voice engine not shown (engine=${engine}, pills="${pill}")`);
+  if (!named) failures += 1;
+} catch (error) {
+  failures += 1;
+  console.log(`FAIL voice engine check: ${error.message}`);
 }
 
 // the Fish live-agent panel must exist, must not load the widget until asked,

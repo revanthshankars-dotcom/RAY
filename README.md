@@ -96,7 +96,12 @@ appear in the interface, logs or `config.json`.
 | --- | --- | --- | --- |
 | **OpenRouter** (default) | reasoning, chat, code | key from <https://openrouter.ai/keys> | `google/gemini-2.5-flash` |
 | **Gemini** (Google) | knowledge, long documents, images/PDF, tool planning | key from <https://aistudio.google.com/apikey> | `gemini-2.5-flash` |
+| **Ollama** (local) | chat/reasoning that works offline | install <https://ollama.com>, no key | whatever you pulled, e.g. `llama3.2:3b` |
 | **Fish Audio** | text to speech | key from <https://fish.audio> | `s2.1-pro-free` |
+
+RAY also speaks **without Fish**: it uses the voice the operating system already
+has (Windows SAPI, macOS `say`, Linux `espeak-ng`), so replies are audible with no
+key and no internet. See [Run it fully local](SETUP.md#f-run-fully-local-no-internet-no-keys).
 
 ### One key, many engines
 
@@ -166,7 +171,7 @@ See [`SETUP.md`](SETUP.md#plain-english-commands-no-provider-required).
 | --- | --- |
 | **Home** | Greeting, date, live CPU/RAM/disk, today's schedule, tasks, reminders, recent files/apps, automation status, security state |
 | **Assistant** | Chat with provider routing; memory context; plans that run tools and show each step |
-| **Voice** | Microphone selection, push-to-talk or wake word (browser speech recognition), Fish Audio playback, visible mic state, stop button; **live calls** with your own Fish Audio agent (browser↔Fish WebRTC, RAY counts the minutes against a budget you set and warns — it never blocks) |
+| **Voice** | Microphone selection, push-to-talk or wake word (browser speech recognition), Fish Audio playback with the local OS voice as the fallback, visible mic state, stop button; **live calls** with your own Fish Audio agent (browser↔Fish WebRTC, RAY counts the minutes against a budget you set and warns — it never blocks) |
 | **Computer** | Launch/close apps, volume, brightness, screenshots, clipboard, keyboard/mouse (approval-gated), power actions with confirmation |
 | **Files** | Browse, search (indexed or live), open, reveal, create folder, rename, copy, move, plan/apply Downloads tidy-up, verified zip backups, duplicate and large-file reports |
 | **Browser** | Web search, read a page, research with citations saved as a report — clearly separates fetched text from AI commentary |

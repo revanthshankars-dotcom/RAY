@@ -37,13 +37,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-CHAT_ENGINES: tuple[str, ...] = ("openrouter", "gemini")
+CHAT_ENGINES: tuple[str, ...] = ("openrouter", "gemini", "ollama")
 SPEECH_ENGINES: tuple[str, ...] = ("fish",)
 ENGINES: tuple[str, ...] = CHAT_ENGINES + SPEECH_ENGINES
+
+#: Engines that are a process on this machine rather than an account somewhere.
+#: They have no key, cost nothing, and keep working with the network unplugged.
+LOCAL_ENGINES: tuple[str, ...] = ("ollama",)
 
 ENGINE_LABELS = {
     "openrouter": "OpenRouter",
     "gemini": "Gemini",
+    "ollama": "Ollama (local)",
     "fish": "Fish Audio",
 }
 
@@ -144,7 +149,16 @@ class EnginePolicy:
         for engine in self._fallback_order:
             if engine not in order:
                 order.append(engine)
+        # The local engine goes last by default: it is the safety net that keeps
+        # RAY answering when the internet, the key or the credit runs out.
+        if self.local_fallback_enabled():
+            for engine in LOCAL_ENGINES:
+                if engine not in order:
+                    order.append(engine)
         return order
+
+    def local_fallback_enabled(self) -> bool:
+        return bool(self.config.get("ai.local_fallback", True))
 
     def cap_for(self, engine: str) -> dict[str, float]:
         raw = self.config.get(f"ai.credits.{engine}", {}) or {}
@@ -197,6 +211,10 @@ class EnginePolicy:
         }
 
     def configured(self, engine: str) -> tuple[bool, str]:
+        if engine in LOCAL_ENGINES:
+            # There is no account to have a key for. Whether the daemon is
+            # actually running is a health question, answered by the router.
+            return True, "local"
         source = "unset"
         if self.credentials is not None:
             try:
@@ -217,6 +235,11 @@ class EnginePolicy:
             # engine still works through another route).
             available = bool(probe.get("available"))
             ok = ok or available
+        elif engine in LOCAL_ENGINES:
+            # No probe means nobody has asked the daemon yet. A local engine
+            # must never be assumed to be running.
+            available = False
+            detail = detail or "the local engine has not been checked yet"
         else:
             available = ok
         credit = self.credits(engine)
@@ -224,10 +247,15 @@ class EnginePolicy:
             "name": engine,
             "label": ENGINE_LABELS.get(engine, engine),
             "configured": ok,
+            "local": engine in LOCAL_ENGINES,
             "key_source": source,
             "available": available and ok,
             "detail": detail,
-            "supports_tools": bool(probe.get("supports_tools", engine in CHAT_ENGINES)),
+            # A local model is not assumed to handle tool calling: that is a
+            # property of the model, and small ones get it wrong. Opt-in only.
+            "supports_tools": bool(
+                probe.get("supports_tools", engine in CHAT_ENGINES and engine not in LOCAL_ENGINES)
+            ),
             "supports_documents": bool(probe.get("supports_documents", engine == "gemini")),
             "model": str(probe.get("model") or ""),
             "credit": credit,
@@ -266,7 +294,8 @@ class EnginePolicy:
                 continue
             if not state["available"]:
                 reason = state["detail"] or f"{state['label']} is not responding"
-                plan.blocked.append(Blocked(engine, "unauthorised", reason))
+                code = "offline" if engine in LOCAL_ENGINES else "unauthorised"
+                plan.blocked.append(Blocked(engine, code, reason))
                 continue
             if needs_tools and not state["supports_tools"]:
                 plan.blocked.append(
@@ -332,8 +361,13 @@ class EnginePolicy:
 
         if policy == "credits":
             # Most headroom first (lowest share of the cap used); the route
-            # order breaks ties and a capped engine sorts last.
+            # order breaks ties and a capped engine sorts last. The local engine
+            # is deliberately *after* every cloud engine: "save my credit"
+            # must not mean "spend it" - the free engine is the safety net, not
+            # the first choice.
             def headroom(engine: str) -> float:
+                if engine in LOCAL_ENGINES:
+                    return 2000.0
                 credit = self.credits(engine)
                 if credit["capped"]:
                     return 1000.0
@@ -367,11 +401,24 @@ class EnginePolicy:
 
     def _blocked_message(self, blocked: list[Blocked]) -> str:
         """Why nothing can take the request, engine by engine, with a next step."""
-        reasons = "; ".join(item.reason for item in blocked[:3]) or "no engine is configured"
-        hint = (
-            "Raise a cap in Settings -> AI providers, add a key, pin another engine, "
-            "or set the cap behaviour to 'switch'."
-        )
+        reasons = "; ".join(item.reason.rstrip(". ") for item in blocked[:3]) or "no engine is configured"
+        codes = {item.code for item in blocked}
+        if codes == {"cap"}:
+            hint = (
+                "Raise a cap in Settings -> AI providers, pin another engine, "
+                "or set the cap behaviour to 'switch'."
+            )
+        elif "offline" in codes and codes <= {"cap", "offline", "no_key"}:
+            # Nothing cloud-shaped answered and the local engine is not running.
+            hint = (
+                "Add a provider key, or start Ollama on this machine (`ollama serve`) "
+                "so RAY can keep working without one."
+            )
+        else:
+            hint = (
+                "Add a key in Settings -> AI providers, or start Ollama on this machine "
+                "(`ollama serve`) to work offline."
+            )
         return f"No engine can take this request: {reasons}. {hint}"
 
     # --------------------------------------------------------------- describe

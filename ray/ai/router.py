@@ -4,7 +4,8 @@ Not every request goes to every engine.  RAY classifies the work, asks
 :class:`ray.ai.policy.EnginePolicy` which engines may take it, falls back only
 when that engine is unavailable, and records what happened.
 
-    chat / reasoning / code / research  -> OpenRouter first, Gemini fallback
+    chat / reasoning / code / research  -> OpenRouter first, Gemini fallback,
+                                           then Ollama on this machine
     planning / tool selection           -> Gemini first (native tool calls)
     documents / images / long analysis  -> Gemini first (inline documents)
     speech                              -> Fish Audio only
@@ -42,6 +43,7 @@ from .base import (
 from .cache import ResponseCache, UsageTracker
 from .fish import FishAudioProvider
 from .gemini import GeminiProvider
+from .ollama import OllamaProvider
 from .openrouter import OpenRouterProvider
 from .policy import ENGINE_LABELS, EnginePolicy, RoutePlan
 
@@ -66,6 +68,7 @@ TASK_ROUTES: dict[str, list[str]] = {
 PROVIDER_CLASSES = {
     "openrouter": OpenRouterProvider,
     "gemini": GeminiProvider,
+    "ollama": OllamaProvider,
     "fish": FishAudioProvider,
 }
 
@@ -191,7 +194,13 @@ class ProviderRouter:
         """
         if kind in GENERIC_KINDS:
             return self.policy.preference()
-        return list(TASK_ROUTES.get(kind, DEFAULT_CHAIN))
+        chain = list(TASK_ROUTES.get(kind, DEFAULT_CHAIN))
+        # Offline safety net: after the engines that suit this job best, a local
+        # model is still better than an error. Speech is excluded - a text model
+        # cannot talk.
+        if kind != "tts" and self.policy.local_fallback_enabled() and "ollama" not in chain:
+            chain.append("ollama")
+        return chain
 
     def plan(
         self,
@@ -369,14 +378,22 @@ class ProviderRouter:
             if cache_key and result.text:
                 self.cache.put(cache_key, result.text, name, result.model, cache_ttl)
             if errors:
-                primary = chain[0]
-                if name != primary and (primary, name) not in audited:
+                # What the user expected to answer is the head of the order, not
+                # necessarily chain[0]: when the preferred engine was already
+                # unusable the chain starts at its replacement, and that change
+                # still has to be visible in the audit log.
+                expected = plan.order[0] if plan.order else chain[0]
+                if expected != name and (expected, name) not in audited:
+                    blocked = next(
+                        (item.reason for item in plan.blocked if item.engine == expected), ""
+                    )
                     self.audit_switch(
                         kind,
-                        primary,
+                        expected,
                         name,
                         code="fallback",
-                        reason="; ".join(item for item in errors[:2] if item.startswith(primary))
+                        reason=blocked
+                        or "; ".join(item for item in errors[:2] if item.startswith(expected))
                         or errors[0],
                         policy=plan.policy,
                     )
@@ -386,9 +403,10 @@ class ProviderRouter:
         message = "No AI provider could handle this request. " + " | ".join(errors[:4])
         if not self.available_providers():
             message = (
-                "No AI provider is configured yet. Add an OpenRouter key (one key, many models) or "
-                "a Gemini key in Settings > AI Providers, or set RAY_OPENROUTER_API_KEY. Local "
-                "features (files, tasks, notes, system monitor, automation) keep working offline."
+                "No AI provider is configured yet. Add an OpenRouter key (one key, many models), "
+                "a Gemini key in Settings > AI Providers, or start Ollama on this machine "
+                "(`ollama serve`) to answer locally with no key at all. Local features (files, "
+                "tasks, notes, system monitor, automation) keep working offline regardless."
             )
         elif not chain:
             message = "No engine may take this request. " + " | ".join(errors[:4])
@@ -417,7 +435,8 @@ class ProviderRouter:
 
     # ----------------------------------------------------------- engine views
     def routes(self) -> dict[str, list[str]]:
-        return {kind: list(chain) for kind, chain in TASK_ROUTES.items()}
+        """The effective chain per kind - including the local safety net."""
+        return {kind: self.route_for(kind) for kind in TASK_ROUTES}
 
     def engine_summary(self, health: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
         """What the Home screen needs: which engine answers, and how close to the cap."""
@@ -432,7 +451,9 @@ class ProviderRouter:
             "policy": plan.policy,
             "cap_behaviour": plan.cap_behaviour,
             "halt": plan.halt,
-            "blocked": [item.as_dict() for item in plan.blocked if item.code in ("cap", "no_key")],
+            "blocked": [
+                item.as_dict() for item in plan.blocked if item.code in ("cap", "no_key", "offline")
+            ],
             "percent": credit.get("percent", 0.0),
             "spent_usd": credit.get("spent_usd", 0.0),
             "monthly_usd": credit.get("monthly_usd", 0.0),

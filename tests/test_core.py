@@ -132,10 +132,12 @@ def test_config_migrates_the_retired_engines(tmp_path, monkeypatch):
         },
     }), encoding="utf-8")
     config = Config(path)
-    assert config.get("ai.routing_version") == 3
+    assert config.get("ai.routing_version") == 4
     assert config.get("ai.engine_order") == ["openrouter", "gemini"]
     assert config.get("ai.default_provider") is None
-    assert set(config.section("ai.providers")) == {"openrouter", "gemini", "fish"}
+    # v4 adds the local engine; the user's order is left exactly as they set it
+    assert set(config.section("ai.providers")) == {"openrouter", "gemini", "ollama", "fish"}
+    assert config.get("ai.local_fallback") is True
     assert "cursor" not in config.section("ai.daily_budget")
     assert config.validate() == []
     saved = json.loads(path.read_text(encoding="utf-8"))["ai"]
@@ -150,7 +152,7 @@ def test_config_migration_prefers_gemini_when_that_is_all_there_is(tmp_path, mon
     path.write_text(json.dumps({"ai": {"routing_version": 2, "default_provider": "grok"}}), encoding="utf-8")
     config = Config(path)
     assert config.get("ai.engine_order") == ["gemini", "openrouter"]
-    assert config.get("ai.routing_version") == 3
+    assert config.get("ai.routing_version") == 4
 
 
 def test_config_keeps_an_explicit_engine_order(tmp_path):
