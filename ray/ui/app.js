@@ -8,6 +8,8 @@ const state = {
   providers: null,
   dashboard: null,
   settings: null,
+  userName: '',
+  engines: null,
   section: 'home',
   eventsCursor: 0,
   approvals: [],
@@ -657,6 +659,50 @@ function capLabel(credit) {
   return `${credit.used_calls} of ${calls} calls · ${credit.percent}%`;
 }
 
+/**
+ * The Home monogram: the user's own initials in a glass bubble, the way iOS
+ * draws a contact. Two letters for a full name, one for a single name, and a
+ * time-of-day glyph when no name is set - never a placeholder "R" that belongs
+ * to nobody.
+ */
+function monogram(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+
+/** A stable hue per person (175-275: cyan -> blue -> violet, the RAY palette). */
+function nameHue(name) {
+  const text = String(name || '').trim().toLowerCase();
+  if (!text) return 196;
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 100000;
+  }
+  return 175 + (hash % 100);
+}
+
+function timeOfDayGlyph(date) {
+  const hour = date.getHours();
+  if (hour < 5) return '\u263E';        // moon
+  if (hour < 12) return '\u2600';       // sun
+  if (hour < 17) return '\u26C5';       // sun behind cloud
+  if (hour < 21) return '\u263D';       // crescent
+  return '\u263E';
+}
+
+/** The same glass bubble, smaller, for the chat log. */
+function bubbleAvatar(who) {
+  if (who === 'user') {
+    const text = monogram(state.userName) || timeOfDayGlyph(new Date());
+    const label = state.userName || 'You';
+    return `<div class="avatar me" style="--me-hue:${nameHue(state.userName)}"
+      role="img" aria-label="${esc(label)}" title="${esc(label)}">${esc(text)}</div>`;
+  }
+  return '<div class="avatar ray" role="img" aria-label="RAY" title="RAY">R</div>';
+}
+
 function describeProvider(name) {
   const list = state.status?.provider_detail?.providers || [];
   return list.find((entry) => entry.name === name) || null;
@@ -984,8 +1030,13 @@ VIEWS.home = async function () {
   const tempPercent = temp.known ? Math.min(100, (temp.celsius / 110) * 100) : 0;
   const warnings = system.warnings || [];
   const name = String(data.user_name || '').trim();
-  const initial = (name || 'R').charAt(0).toUpperCase();
+  state.userName = name;
   const now = new Date();
+  const initials = monogram(name);
+  const hue = nameHue(name);
+  const firstName = name.split(/\s+/).filter(Boolean)[0] || '';
+  const avatarText = initials || timeOfDayGlyph(now);
+  const avatarLabel = name || 'Your day so far';
   const dayPercent = Math.round(((now.getHours() * 60 + now.getMinutes()) / 1440) * 100);
   const policy = security?.policy || data.security || {};
   const pending = (security?.pending || []).length;
@@ -1013,12 +1064,14 @@ VIEWS.home = async function () {
     <section class="home-cmd">
       <div class="card">
         <div class="hero-main">
-          <div class="hero-avatar">${esc(initial)}</div>
-          <div style="min-width:0">
-            <h2>${esc(data.greeting)}${name ? `, ${esc(name)}` : ''}!</h2>
+          <div class="hero-avatar ${initials ? 'has-initials' : 'has-glyph'}"
+               style="--me-hue:${hue}" role="img" aria-label="${esc(avatarLabel)}"
+               title="${esc(avatarLabel)}">${esc(avatarText)}</div>
+          <div class="hero-copy">
+            <h2>${esc(data.greeting)}${firstName ? `, ${esc(firstName)}` : ''}</h2>
             <div class="sub">${esc(data.date_label)} · ${data.tasks_stats.open} open task(s) · ${data.reminders.length} reminder(s) in the next day</div>
             <div class="progress" title="Day ${dayPercent}% elapsed"><i style="width:${dayPercent}%"></i></div>
-            <div class="row wrap" style="margin-top:10px">
+            <div class="row wrap">
               ${engineChip}
               <span class="pill ${online ? 'ok' : 'warn'}">${online ? 'AI connected' : 'offline mode'}</span>
               <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}">${policy.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
@@ -1412,7 +1465,7 @@ function renderChat() {
   const log = $('#chat-log');
   if (!log) return;
   if (!state.chat.length) {
-    log.innerHTML = `<div class="msg"><div class="avatar">R</div><div class="bubble">Ready.
+    log.innerHTML = `<div class="msg">${bubbleAvatar('ray')}<div class="bubble">Ready.
 Try: "summarise the PDF in my Downloads", "what is on my schedule tomorrow", or "open Chrome and search for the Companies Act".
 Without API keys I can still run every local command.</div></div>`;
     return;
@@ -1424,11 +1477,11 @@ Without API keys I can still run every local command.</div></div>`;
           <span class="idx">${outcome.ok ? '✓' : outcome.requires_approval ? '!' : '×'}</span>
           <span><span class="tool">${esc(outcome.tool)}</span> ${esc(outcome.error || outcome.why || '')}</span>
           <span class="faint small">${outcome.duration_ms} ms</span></div>`).join('');
-      return `<div class="msg"><div class="avatar">R</div><div class="bubble">${esc(message.answer || '')}
+      return `<div class="msg">${bubbleAvatar('ray')}<div class="bubble">${esc(message.answer || '')}
         ${steps ? `<div class="steps">${steps}</div>` : ''}
         <div class="faint tiny" style="margin-top:8px">${esc(message.agent)} · ${message.duration_ms} ms · ${esc(message.status)}</div></div></div>`;
     }
-    return `<div class="msg ${message.role}"><div class="avatar">${message.role === 'user' ? 'You' : 'R'}</div>
+    return `<div class="msg ${message.role}">${bubbleAvatar(message.role === 'user' ? 'user' : 'ray')}
       <div class="bubble">${esc(message.content)}</div></div>`;
   }).join('');
   log.scrollTop = log.scrollHeight;
@@ -2771,6 +2824,7 @@ VIEWS.settings = async function () {
   state.settings = settings;
   state.engines = engines;
   if (state.section !== 'settings') return;
+  state.userName = String(settings.config.app.user_name || '').trim();
   const config = settings.config;
   const credentials = providers.credentials;
   view().innerHTML = `
@@ -3418,8 +3472,10 @@ function openApprovalDialog() {
 
 /* -------------------------------------------------------------- bootstrap */
 async function refreshStatus() {
+  // (the same call also tells us whose monogram the UI should draw)
   try {
     state.status = await api('/api/status');
+    if (!state.userName) state.userName = String(state.status.user_name || '');
     const providers = state.status.providers || {};
     const online = Object.values(providers).some((provider) => provider.available);
     const configured = Object.values(providers).some((provider) => provider.configured);

@@ -291,6 +291,8 @@ class RayApp:
         return {
             "name": "RAY",
             "version": __version__,
+            # who is using this install - the UI draws their monogram from it
+            "user_name": str(self.config.get("app.user_name", "") or "").strip(),
             "uptime_seconds": int(time.time() - self.started_at),
             "home": str(self.paths.home),
             "platform": self.sysmon.identity(),

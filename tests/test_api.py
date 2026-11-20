@@ -466,3 +466,11 @@ def test_manual_policy_serves_only_the_pinned_engine(client, app, monkeypatch):
     active = client.get("/api/ai/engines")["data"]["active"]
     assert active["usable"] == ["gemini"]
     assert active["order"][0] == "gemini"
+
+
+def test_status_reports_the_user_name_for_the_monogram(client, app):
+    client.post("/api/settings", {"values": {"app.user_name": "Revanth Shankar"}})
+    status = client.get("/api/status")["data"]
+    assert status["user_name"] == "Revanth Shankar"
+    dashboard = client.get("/api/dashboard")["data"]
+    assert dashboard["user_name"] == "Revanth Shankar"

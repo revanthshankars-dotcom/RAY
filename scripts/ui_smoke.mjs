@@ -81,6 +81,24 @@ for (const section of sections) {
   }
 }
 
+// the Home monogram: initials when a name is set, a time-of-day glyph otherwise
+try {
+  await window.eval("go('home')");
+  await sleep(1200);
+  const avatar = window.document.querySelector('.hero-avatar');
+  const text = (avatar?.textContent || '').trim();
+  const initials = avatar?.classList.contains('has-initials');
+  const glyph = avatar?.classList.contains('has-glyph');
+  const tinted = Boolean(avatar?.style.getPropertyValue('--me-hue'));
+  const ok = Boolean(avatar) && tinted && ((initials && /^[A-Z]{1,2}$/.test(text)) || (glyph && text.length === 1));
+  console.log(ok ? `ok   home monogram (${text}, hue ${avatar.style.getPropertyValue('--me-hue')})`
+    : `FAIL home monogram (text=${JSON.stringify(text)} initials=${initials} glyph=${glyph} tinted=${tinted})`);
+  if (!ok) failures += 1;
+} catch (error) {
+  failures += 1;
+  console.log(`FAIL home monogram: ${error.message}`);
+}
+
 // interactions the user actually performs
 errors.length = 0;
 try {

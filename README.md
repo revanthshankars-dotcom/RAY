@@ -8,7 +8,8 @@ automation — through a validated command layer instead of pretending.
 - **Engine**: Python 3.10+, SQLite (WAL) + FTS5, standard library HTTP server.
 - **Interface**: its own window (PySide6/QtWebEngine) showing a local web UI
   served at `127.0.0.1:8765`. No build step, no external assets, no CDN. The
-  Home screen is a command centre: greeting and day progress, a live RAY orb,
+  Home screen is a command centre: your initials in a translucent glass bubble
+  (iOS-style monogram, tinted from your own name), a greeting and day progress, a live RAY orb,
   CPU/RAM/disk/temperature rings with network rate and uptime, an inline
   assistant (Chat / Research / Analyse), today's schedule, quick tools, a
   tile for every section, a real security scan, automation & agents, recent

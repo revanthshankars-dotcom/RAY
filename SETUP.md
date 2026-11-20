@@ -293,13 +293,17 @@ that is what OpenRouter and Gemini are for. RAY says so instead of guessing.
 
 ## First five minutes
 
-1. Say **"help"** — you should get the capability list, not an error.
-2. Say **"how much ram am i using"** — real numbers from this machine.
-3. Say **"remind me in 20 minutes to stretch"** — check Reminders.
-4. **Settings → AI providers** → add Gemini, press **Test**.
-5. Say **"open my downloads"** (local install) or **"index status"**.
-6. **Security → Run full check** — 13/13 checks, warnings only for deliberate
-   network exposure.
+1. **Settings → General → Your name** — RAY draws your initials in the glass
+   bubble on Home ("Revanth Shankar" → `RS`) and tints it from a hue derived
+   from the name, so the interface is yours on every launch. With no name it
+   shows the time of day instead of a placeholder letter.
+2. Say **"help"** — you should get the capability list, not an error.
+3. Say **"how much ram am i using"** — real numbers from this machine.
+4. Say **"remind me in 20 minutes to stretch"** — check Reminders.
+5. **Settings → AI providers** → add OpenRouter (or Gemini), press **Test**.
+6. Say **"open my downloads"** (local install) or **"index status"**.
+7. **Security → Run full check** — every check passes; warnings only for
+   deliberate network exposure.
 
 ---
 
