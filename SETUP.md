@@ -63,11 +63,72 @@ hardware, and the folders are the container's, not yours.
 
    The UI reads the token from the page it is served, so you do not type it.
 
-Keys in Codespaces: **GitHub → Settings → Codespaces → Secrets** → add
-`RAY_GEMINI_API_KEY`, `RAY_CURSOR_API_KEY`, `RAY_FISH_API_KEY` (and
-`RAY_GROK_API_KEY` if you keep Grok), then stop/start the Codespace. Or paste
-them in the running UI under **Settings → AI providers**; the data folder is
-inside the workspace, so it survives a stopped Codespace.
+### B.1 Walkthrough, with all four providers
+
+1. **Get the current code.** If PR #1 is merged, create the Codespace on
+   **`main`**. If it is not merged yet, create it on the branch
+   `arena/84eddd81-ray` (Code ▾ → Codespaces → … → *New with options* → branch).
+2. **Create the codespace.** Repository → **Code ▾ → Codespaces → Create
+   codespace**. The included `.devcontainer` installs Python 3.11 and the four
+   dependencies; wait for "Configuration complete".
+3. **Add the four keys as Codespaces secrets** (they survive rebuilds and are
+   never written into the repo): GitHub avatar → **Settings → Codespaces →
+   New secret**. For each one set *Repository access* to
+   `revanthshankars-dotcom/RAY`.
+
+   | Secret name | Value from | Needed for |
+   |---|---|---|
+   | `RAY_GEMINI_API_KEY` | <https://aistudio.google.com/apikey> | multi-step planning, documents, fallback chat — **the important one** |
+   | `RAY_FISH_API_KEY` | <https://fish.audio> → API keys | spoken replies |
+   | `RAY_CURSOR_API_KEY` | cursor.com dashboard → API keys | chat/reasoning without a CLI login (optional — `cursor-agent login` also works) |
+   | `RAY_GROK_API_KEY` | <https://console.x.ai> | optional legacy path; skip unless you want it |
+   | `RAY_API_TOKEN` | any 32+ random characters (`python3 -c "import secrets;print(secrets.token_urlsafe(32))"`) | protects the forwarded web endpoint — not a provider key |
+
+4. **Restart the codespace** (Command Palette → *Codespaces: Rebuild Container*,
+   or stop/start) so the secrets become environment variables.
+5. **Optional: install the Cursor CLI** if you want Cursor as the chat engine
+   without an API key:
+
+   ```bash
+   curl https://cursor.com/install -fsS | bash
+   export PATH="$HOME/.local/bin:$PATH"
+   cursor-agent login        # prints a URL; finish the login in your browser
+   ```
+
+6. **Start RAY** in the codespace terminal:
+
+   ```bash
+   RAY_ALLOW_REMOTE_ORIGIN=1 python3 main.py --headless --host 0.0.0.0 --port 8765 --no-open
+   ```
+
+7. **Open the interface.** *Ports* tab → `8765` → globe icon. Keep visibility
+   **private**; the token is only extra protection for shared links.
+8. **Confirm the providers.** In the app: **Settings → AI providers** — Gemini,
+   Fish and Cursor should show *configured* (from the environment). Press
+   **Test** on each. Don't paste a key in the UI if the secret already exists;
+   the UI value would just duplicate it.
+9. **Prove it works.** Try `"how much ram am i using"` (local, no key needed),
+   then a multi-step request such as `"find my five largest files and make a
+   note with their paths"` — that one needs Gemini.
+
+Checks in the codespace terminal:
+
+```bash
+python main.py --check     # python, packages, data home, which providers are configured
+python -m pytest -q        # 252 tests, offline
+```
+
+**What a Linux codespace can and cannot do.** It can plan, chat, research, read
+and index files inside the workspace, manage tasks/notes/reminders/calendar and
+run automation. It cannot open Windows apps, change your PC's volume or
+brightness, type into other windows, use the clipboard, lock or sleep your PC,
+or open Windows settings pages — those tools belong to the machine RAY runs on.
+Use the live preview here or the codespace to explore, and the Windows install
+(section C) when you want RAY to drive your own PC.
+
+**Keep it cheap.** Stop the codespace when you are done (it keeps its disk and
+`.runtime` data); stop, don't delete, unless you want to lose the vault and
+history. `git pull` later updates the code without touching `.runtime`.
 
 ---
 
