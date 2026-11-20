@@ -475,10 +475,31 @@ lock yourself) and confirm RAY still starts offline.
 
 **Rule.** Every string that reaches the DOM MUST pass through `esc()` unless it
 is a literal. There MUST be no `eval`, `new Function`, `innerHTML` of raw API
-data, no inline `<script>`, and no third-party script, style or font. The server
-MUST send a strict CSP (`default-src 'self'`, `object-src 'none'`,
-`base-uri 'none'`, `form-action 'none'`). The desktop shell MUST load only the
-local origin and MUST NOT enable remote debugging.
+data, no inline `<script>`, and no third-party script, style or font fetched from
+a network origin. The server MUST send a strict CSP (`default-src 'self'`,
+`object-src 'none'`, `base-uri 'none'`, `form-action 'none'`). The desktop shell
+MUST load only the local origin and MUST NOT enable remote debugging.
+
+**The one documented exception — the Fish Audio live agent.** `script-src` stays
+`'self'`: the widget is a file RAY ships (`ray/ui/assets/fish-agent-widget.js`,
+MIT, v1.1.0, third-party notices alongside it), never a CDN. When you press
+*Start live call* the browser opens a WebRTC call to Fish, which requires exactly
+two things the CSP would otherwise refuse:
+
+| Directive | Added | Why it cannot be narrower |
+| --- | --- | --- |
+| `connect-src` | `https://api.fish.audio` | the widget fetches its session token from Fish |
+| `connect-src` | `wss://*.livekit.cloud`, `https://*.livekit.cloud`, `wss://*.livekit.run`, `https://*.livekit.run` | the room URL is issued per session by Fish, so the host is not known ahead of time |
+| `worker-src` | `'self' blob:` | LiveKit's audio worklet |
+
+Nothing else is widened. The script itself is only injected when you press Start,
+so an ordinary session runs zero third-party code. Audio goes browser → Fish; RAY
+does not relay, decrypt or record it, and cannot meter it — so it is counted
+locally from the call timer and compared with a budget you set. That budget warns
+and never blocks, by design (see `ray/media/voice_agent.py`). If your Fish agent
+uses a LiveKit host outside `*.livekit.cloud`/`*.livekit.run`, the call is refused
+by the CSP until you add that host yourself — deliberately loud rather than
+silently permissive.
 
 **Why.** A note title, file name or web page title is a string written by
 someone else; XSS inside an agent UI is a path to the API and therefore to the
@@ -486,7 +507,9 @@ tools.
 
 **Enforced by.** `ray/ui/app.js` (`esc`, template discipline — 69 `innerHTML`
 sites reviewed), `ray/ui/index.html` (no inline script), `ray/server/app.py`
-(CSP), `ray/desktop/shell.py` (local URL only).
+(CSP), `ray/desktop/shell.py` (local URL only). The Fish exception is pinned by
+`tests/test_api.py::test_content_security_policy_allows_only_the_fish_agent_exception`,
+which fails if `script-src` ever stops being `'self'` or if a CDN appears.
 
 **Verify.** Create a note titled `<img src=x onerror=alert(1)>`: it renders as
 text. `grep -n "eval(" ray/ui/app.js` → nothing.

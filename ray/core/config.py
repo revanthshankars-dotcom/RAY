@@ -108,6 +108,11 @@ DEFAULTS: dict[str, Any] = {
         "volume": 0.9,
         "voice_id": "",
         "interruptible": True,
+        # Fish Audio live agent: a browser <-> Fish WebRTC call. Off until the
+        # user supplies an agent id and opts in; the minutes budget only warns.
+        "agent_id": "",
+        "agent_enabled": False,
+        "agent_minutes_cap": 30,
     },
     "permissions": {
         "mode": "standard",

@@ -474,3 +474,73 @@ def test_status_reports_the_user_name_for_the_monogram(client, app):
     assert status["user_name"] == "Revanth Shankar"
     dashboard = client.get("/api/dashboard")["data"]
     assert dashboard["user_name"] == "Revanth Shankar"
+
+
+# --------------------------------------------------------------------- voice
+AGENT_ID = "d9c5173d3325406aaba6fac8ba0185e3"
+
+
+def test_live_voice_panel_is_honest_before_anything_is_configured(client):
+    payload = client.get("/api/voice/agent")["data"]
+    assert payload["enabled"] is False and payload["configured"] is False
+    # served from RAY's own disk - the panel must not point at a CDN
+    assert payload["script"] == "/assets/fish-agent-widget.js"
+    assert payload["transport"] == "webrtc-livekit"
+    notes = " ".join(payload["notes"]).lower()
+    assert "webrtc" in notes and "bills" in notes and "allowlist" in notes
+
+
+def test_saving_a_live_agent_requires_a_plausible_agent_id(client):
+    bad = client.post("/api/voice/agent", {"agent_id": "not an id", "enabled": True})
+    assert bad["ok"] is False and "agent id" in bad["error"]
+    good = client.post("/api/voice/agent", {"agent_id": AGENT_ID, "enabled": True, "cap_minutes": 20})["data"]
+    assert good["agent_id"] == AGENT_ID and good["enabled"] is True and good["cap_minutes"] == 20
+
+
+def test_live_calls_cannot_be_enabled_without_an_agent_id(client):
+    payload = client.post("/api/voice/agent", {"enabled": True})["data"]
+    assert payload["enabled"] is False and payload["configured"] is False
+
+
+def test_voice_minutes_are_counted_but_a_call_is_never_refused(client):
+    client.post("/api/voice/agent", {"agent_id": AGENT_ID, "enabled": True, "cap_minutes": 1})
+    first = client.post("/api/voice/agent/session", {"seconds": 90})["data"]
+    assert first["calls"] == 1 and first["minutes_used"] == 1.5 and first["over_cap"] is True
+    # over budget, and it still records instead of blocking
+    second = client.post("/api/voice/agent/session", {"seconds": 30})
+    assert second["ok"] is True
+    assert second["data"]["calls"] == 2 and second["data"]["over_cap"] is True
+
+
+def test_voice_sessions_are_audited_and_bad_seconds_are_rejected(client):
+    client.post("/api/voice/agent", {"agent_id": AGENT_ID, "enabled": True})
+    client.post("/api/voice/agent/session", {"seconds": 12.5})
+    bad = client.post("/api/voice/agent/session", {"seconds": "a while"})
+    assert bad["ok"] is False
+    # the audit trail is visible through the API the UI reads
+    audit = client.get("/api/security?limit=50")["data"]["audit"]
+    actions = [row["action"] for row in audit]
+    assert actions.count("voice_agent_session") == 1
+    assert "voice_agent_settings" in actions
+
+
+def test_content_security_policy_allows_only_the_fish_agent_exception(client):
+    import urllib.request
+
+    with urllib.request.urlopen(f"{client.base}/", timeout=10) as response:
+        csp = response.headers.get("Content-Security-Policy", "")
+    assert "script-src 'self'" in csp, "no CDN script may ever be allowed"
+    assert "https://api.fish.audio" in csp
+    assert "wss://*.livekit.cloud" in csp
+    assert "https://unpkg.com" not in csp
+    assert "default-src 'self'" in csp
+
+
+def test_the_widget_is_served_from_disk_not_a_cdn(client):
+    import urllib.request
+
+    with urllib.request.urlopen(f"{client.base}/assets/fish-agent-widget.js", timeout=20) as response:
+        body = response.read()
+        assert response.status == 200
+        assert "javascript" in response.headers.get("Content-Type", "")
+    assert b"fish-agent" in body and len(body) > 100_000

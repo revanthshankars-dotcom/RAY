@@ -129,6 +129,23 @@ try {
   console.log(`FAIL settings: ${error.message}`);
 }
 
+// the Fish live-agent panel must exist, must not load the widget until asked,
+// and must never claim minutes it has not recorded
+try {
+  await window.eval("go('voice')");
+  await sleep(900);
+  const card = window.document.querySelector('#live-card');
+  const scriptLoaded = Boolean(window.document.querySelector('script[data-ray-fish-agent]'));
+  const usage = (window.document.querySelector('#live-usage')?.textContent || '').replace(/\s+/g, ' ').trim();
+  const hasFields = Boolean(window.document.querySelector('#live-agent-id'));
+  const ok = Boolean(card) && hasFields && !scriptLoaded && /min used . \d+ call/.test(usage);
+  console.log(ok ? `ok   live voice panel (${usage})` : `FAIL live voice panel (card=${Boolean(card)} fields=${hasFields} script=${scriptLoaded} usage="${usage}")`);
+  if (!ok) failures += 1;
+} catch (error) {
+  failures += 1;
+  console.log(`FAIL live voice panel: ${error.message}`);
+}
+
 try {
   await window.eval("go('home')");
   await sleep(400);

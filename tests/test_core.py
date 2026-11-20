@@ -164,12 +164,31 @@ def test_config_keeps_an_explicit_engine_order(tmp_path):
     assert config.get("ai.cap_behaviour") == "stop"
 
 
-def test_database_is_at_schema_four_with_usage_cost(tmp_path):
+def test_database_is_at_schema_five_with_usage_cost(tmp_path):
     from ray.core.database import SCHEMA_VERSION
 
     db = Database(tmp_path / "legacy.db")
     db.migrate()
-    assert SCHEMA_VERSION == 4
-    assert db.scalar("PRAGMA user_version") == 4
+    assert SCHEMA_VERSION == 5
+    assert db.scalar("PRAGMA user_version") == 5
     columns = {row["name"] for row in db.query("PRAGMA table_info(usage)")}
     assert "cost_usd" in columns
+
+
+def test_a_version_four_database_gains_the_voice_session_table(tmp_path):
+    """People already running RAY have a v4 file; upgrading must not lose it."""
+    from ray.core.database import SCHEMA_VERSION
+
+    path = tmp_path / "v4.db"
+    db = Database(path)
+    db.migrate()
+    db.execute("DROP TABLE IF EXISTS voice_sessions")
+    db.execute("PRAGMA user_version=4")
+    db.close()
+
+    upgraded = Database(path)
+    assert upgraded.migrate() == SCHEMA_VERSION == 5
+    tables = {row["name"] for row in upgraded.query("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "voice_sessions" in tables
+    assert upgraded.query_one("SELECT COUNT(*) AS n FROM voice_sessions")["n"] == 0
+    upgraded.close()

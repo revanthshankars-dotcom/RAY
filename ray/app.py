@@ -34,6 +34,7 @@ from .core.logging_setup import get_logger, setup_logging
 from .core.paths import Paths, paths as default_paths
 from .knowledge.indexer import FileIndexer, IndexSearch
 from .media.service import MediaService
+from .media.voice_agent import VoiceAgent
 from .memory.store import MemoryStore
 from .productivity.calendar import CalendarService
 from .productivity.focus import FocusService
@@ -107,6 +108,7 @@ class RayApp:
             cache=self.router.cache, bus=self.bus, indexer=self.indexer,
         )
 
+        self.voice_agent = VoiceAgent(self.db, self.config, self.audit)
         self.agents = AgentRegistry()
         self.planner = Planner(self.router, self.tools, self.memory, self.config)
         self.orchestrator = Orchestrator(
