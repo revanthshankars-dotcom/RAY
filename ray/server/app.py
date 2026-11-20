@@ -188,8 +188,10 @@ def _make_handler(app):
             if host_header and target.netloc.lower() == host_header:
                 return True
             if _CURRENT.get("exposed", False):
-                # Deliberately network-bound: a reverse proxy may rewrite hosts,
-                # so fall back to allowing the local addresses only.
+                # Behind a reverse proxy the browser origin and the forwarded Host
+                # header differ. That is only acceptable when the operator opts in.
+                if os.environ.get("RAY_ALLOW_REMOTE_ORIGIN", "").lower() in ("1", "true", "yes"):
+                    return True
                 return target.hostname in ("127.0.0.1", "localhost", "::1")
             port = self.server.server_port
             return target.hostname in ("127.0.0.1", "localhost", "::1") and (
@@ -1272,7 +1274,8 @@ _CURRENT: dict[str, Any] = {"host": "127.0.0.1", "port": 8765, "exposed": False}
 
 def create_server(app, host: str | None = None, port: int | None = None) -> RayServer:
     host = host or str(app.config.get("ui.host", "127.0.0.1"))
-    port = int(port or app.config.get("ui.port", 8765))
+    # port=0 is meaningful: "let the OS pick a free port" (used by the tests).
+    port = int(port) if port is not None else int(app.config.get("ui.port", 8765))
     server = RayServer(app, host, port)
     _CURRENT.update({"host": host, "port": port, "exposed": server.exposed})
     return server

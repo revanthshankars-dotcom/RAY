@@ -145,7 +145,8 @@ change — it never reports success it did not achieve.
   page is open; it is not an always-on background listener.
 - **Backups** are verified zips of chosen paths plus a database copy. There is no
   scheduled cloud backup (cloud backup is opt-in via your own tools).
-- **Single user, single machine.** The API is loopback-only by default.
+- **Single user, single machine.** The API is loopback-only by default; if you put a proxy in front of it, set
+  `RAY_ALLOW_REMOTE_ORIGIN=1`.
 
 ---
 

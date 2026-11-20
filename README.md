@@ -231,6 +231,7 @@ through the UI and runs a command, failing on any error.
 | "Volume control is unavailable" | Install `pycaw` on Windows (publisher: `pip install pycaw`) |
 | Keyboard/mouse tools refuse | `pip install pynput` and approve the action |
 | Offline chat message | Add a Grok or Gemini key; local tools keep working |
+| Running behind a reverse proxy | Set `RAY_ALLOW_REMOTE_ORIGIN=1`; cross-site writes are refused otherwise |
 
 Detailed status, including what is and is not verified, is in
 [FINAL_REPORT.md](FINAL_REPORT.md).
