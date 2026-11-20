@@ -1,6 +1,6 @@
 # RAY — final report
 
-**Version 0.1.0 · branch `arena/84eddd81-ray` · 20 November 2026**
+**Version 0.1.0 · branch `arena/4d1e2c55-ray` (PR #2) · 20 November 2026**
 
 RAY (Real-time Autonomous Yourself) is a local-first personal AI operating
 system for Windows: one Python engine, one SQLite store, a local HTTP API and an
@@ -35,7 +35,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 261 tests,
+Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 264 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -44,12 +44,12 @@ Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 261 tests,
 
 ```
 $ python -m pytest
-261 passed in 28.0s
+264 passed in 29.0s
 ```
 
 | Test file | Tests | Focus |
 | --- | --- | --- |
-| `test_api.py` | 34 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
+| `test_api.py` | 37 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
 | `test_brain.py` | 73 | plain-English intents (32 phrasings), planner/tool schema agreement, agent hints, time parsing, plans, step caps, approvals, cancel, resume |
 | `test_ai.py` | 42 | OpenRouter/Gemini/Fish parsing, tool calls, 402/429 mapping, engine policy (order, caps, stop vs switch, capability filter), switch auditing, cache |
 | `test_memory_knowledge.py` | 19 | memory CRUD/export/prune/secrets, OOXML extraction, FTS search, excludes |

@@ -63,15 +63,17 @@ hardware, and the folders are the container's, not yours.
 
    The UI reads the token from the page it is served, so you do not type it.
 
-### B.1 Walkthrough, with all four providers
+### B.1 Walkthrough, from zero to a working RAY
 
-1. **Get the current code.** If PR #1 is merged, create the Codespace on
-   **`main`**. If it is not merged yet, create it on the branch
-   `arena/84eddd81-ray` (Code ▾ → Codespaces → … → *New with options* → branch).
+1. **Get the current code.** OpenRouter replaced the Cursor CLI and Grok in
+   PR #2. If that PR is merged, create the Codespace on **`main`**. If it is
+   still open, create it on the branch `arena/4d1e2c55-ray`
+   (Code ▾ → Codespaces → … → *New with options* → branch) — everything below
+   is identical either way.
 2. **Create the codespace.** Repository → **Code ▾ → Codespaces → Create
    codespace**. The included `.devcontainer` installs Python 3.11 and the four
    dependencies; wait for "Configuration complete".
-3. **Add the four keys as Codespaces secrets** (they survive rebuilds and are
+3. **Add three keys as Codespaces secrets** (they survive rebuilds and are
    never written into the repo): GitHub avatar → **Settings → Codespaces →
    New secret**. For each one set *Repository access* to
    `revanthshankars-dotcom/RAY`.
@@ -105,13 +107,14 @@ hardware, and the folders are the container's, not yours.
    the UI value would just duplicate it.
 9. **Prove it works.** Try `"how much ram am i using"` (local, no key needed),
    then a multi-step request such as `"find my five largest files and make a
-   note with their paths"` — that one needs Gemini.
+   note with their paths"` — that one needs an engine that can call tools,
+   which is OpenRouter or Gemini.
 
 Checks in the codespace terminal:
 
 ```bash
 python main.py --check     # python, packages, data home, which providers are configured
-python -m pytest -q        # 261 tests, offline
+python -m pytest -q        # 264 tests, offline
 ```
 
 **What a Linux codespace can and cannot do.** It can plan, chat, research, read
