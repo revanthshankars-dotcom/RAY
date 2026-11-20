@@ -496,8 +496,17 @@ function speak(text, options = {}) {
     const type = response.headers.get('content-type') || '';
     if (!type.startsWith('audio/')) {
       const payload = await response.json().catch(() => ({}));
-      toast('Voice unavailable', payload.error || 'Fish Audio is not configured.', 'warn');
+      const fix = payload.local_voice?.fix || '';
+      toast('Voice unavailable', (payload.error || 'No speech engine is available.') + (fix ? ` ${fix}` : ''), 'warn', 9000);
       return;
+    }
+    // The server may have spoken with the local OS voice instead of Fish. Say
+    // which one, and why, instead of letting the user wonder.
+    const engine = response.headers.get('x-audio-engine') || 'fish';
+    if (engine === 'local' && !state.localVoiceNoted) {
+      state.localVoiceNoted = true;
+      toast('Spoken locally', 'Fish Audio was not available, so RAY used this computer\'s own voice. '
+        + 'Nothing was uploaded.', 'info', 7000);
     }
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -598,6 +607,15 @@ const PROVIDERS = [
     optional: false,
   },
   {
+    name: 'ollama',
+    label: 'Ollama (local)',
+    kind: 'local',
+    role: 'offline fallback — your own models, no key, no internet',
+    keyUrl: 'https://ollama.com/download',
+    env: 'OLLAMA_HOST',
+    optional: true,
+  },
+  {
     name: 'fish',
     label: 'Fish Audio',
     kind: 'key',
@@ -608,8 +626,8 @@ const PROVIDERS = [
   },
 ];
 
-const CHAT_ENGINES = ['openrouter', 'gemini'];
-const ENGINE_LABELS = { openrouter: 'OpenRouter', gemini: 'Gemini', fish: 'Fish Audio' };
+const CHAT_ENGINES = ['openrouter', 'gemini', 'ollama'];
+const ENGINE_LABELS = { openrouter: 'OpenRouter', gemini: 'Gemini', ollama: 'Ollama (local)', fish: 'Fish Audio' };
 
 // The three policies, in the words a person needs to choose between them.
 const ENGINE_POLICIES = [
@@ -1548,11 +1566,22 @@ VIEWS.voice = async function () {
     <div class="grid cols-2" style="align-items:start">
       <div class="card">
         <div class="card-head"><h2>Speak</h2><span class="spacer"></span>
-          <span class="pill ${status.fish_configured ? 'ok' : 'warn'}">${status.fish_configured ? 'Fish Audio ready' : 'Fish Audio not configured'}</span></div>
+          <span class="pill ${status.fish_configured ? 'ok' : status.local_voice?.available ? 'warn' : 'bad'}">
+            ${status.fish_configured ? 'Fish Audio ready'
+              : status.local_voice?.available ? `Local voice · ${esc(status.local_voice.engine)}`
+              : 'No voice engine'}</span></div>
         <button class="mic ${state.listening ? 'listening' : ''}" id="mic" title="Push to talk">${icon('voice', 30)}</button>
         <p class="center small faint" id="mic-status" style="margin-top:10px">
           ${state.listening ? 'Listening… click to stop' : 'Click to speak. The microphone is only active while you hold this open.'}
         </p>
+        ${status.fish_configured ? '' : `
+        <div class="banner info small" style="margin-top:12px">
+          ${status.local_voice?.available
+            ? `Fish Audio has no key, so RAY speaks with this computer's own voice
+               (<strong>${esc(status.local_voice.engine)}</strong>). It works with the internet unplugged
+               and nothing is uploaded. Add a Fish key in Settings for studio-quality speech.`
+            : `Fish Audio has no key and no local voice was found. ${esc(status.local_voice?.fix || '')}`}
+        </div>`}
         <div class="col" style="margin-top:16px">
           <label class="field"><span>Say something</span>
             <textarea id="speak-text" placeholder="Type a sentence and RAY will speak it with Fish Audio">Good evening. Your system is healthy and you have two tasks left for today.</textarea>
@@ -1694,7 +1723,8 @@ VIEWS.voice = async function () {
   $('#speak-btn').addEventListener('click', () => {
     const text = $('#speak-text').value.trim();
     if (!text) return;
-    $('#speak-status').textContent = 'Generating with Fish Audio…';
+    // the server decides: Fish if it can, the local voice otherwise
+    $('#speak-status').textContent = 'Speaking…';
     speak(text, { force: true });
   });
 
@@ -3243,11 +3273,19 @@ VIEWS.settings = async function () {
       <div class="card">
         <div class="card-head"><h2>Models &amp; routing</h2></div>
         <div class="form-row">
-          ${['openrouter', 'gemini', 'fish'].map((name) => `
+          ${['openrouter', 'gemini', 'ollama', 'fish'].map((name) => `
             <label class="field"><span>${ENGINE_LABELS[name] || name} model</span>
               <input type="text" id="model-${name}" value="${esc(config.ai.providers[name]?.model || '')}"
-                placeholder="${name === 'openrouter' ? 'google/gemini-2.5-flash' : name === 'gemini' ? 'gemini-2.5-flash' : 's2.1-pro-free'}" />
+                placeholder="${name === 'openrouter' ? 'google/gemini-2.5-flash' : name === 'gemini' ? 'gemini-2.5-flash' : name === 'ollama' ? 'llama3.2:3b (blank = first installed)' : 's2.1-pro-free'}" />
             </label>`).join('')}
+          <label class="field"><span>Ollama address (local daemon)</span>
+            <input type="text" id="model-ollama-host" value="${esc(config.ai.providers.ollama?.base_url || 'http://127.0.0.1:11434')}" placeholder="http://127.0.0.1:11434" /></label>
+          <label class="switch"><input type="checkbox" id="local-fallback" ${config.ai.local_fallback ? 'checked' : ''}>
+            <span class="track"></span>Fall back to Ollama when the internet, a key or the credit runs out</label>
+          <div class="banner info small">
+            Ollama runs on this computer: no key, no bill, no network. RAY uses it only after the
+            cloud engines fail, so your answers stay fast while you are online.
+          </div>
           <label class="field"><span>Fish Audio voice id</span>
             <input type="text" id="model-fish-voice" value="${esc(config.ai.providers.fish?.reference_id || '')}" placeholder="reference_id" /></label>
         </div>
@@ -3458,13 +3496,25 @@ VIEWS.settings = async function () {
           const value = $(`#model-${name}`).value.trim();
           if (value) await api('/api/providers/model', { method: 'POST', body: { name, model: value } }).catch(() => {});
         }
+        // Ollama has no key: a model name and the daemon's address are the whole
+        // configuration, and an empty model means "use whatever is installed".
+        const ollamaModel = $('#model-ollama')?.value.trim() ?? '';
+        const ollamaHost = $('#model-ollama-host')?.value.trim() || 'http://127.0.0.1:11434';
+        await api('/api/settings', {
+          method: 'POST',
+          body: { values: {
+            'ai.providers.ollama.model': ollamaModel,
+            'ai.providers.ollama.base_url': ollamaHost,
+            'ai.local_fallback': Boolean($('#local-fallback')?.checked),
+          } },
+        });
         const voice = $('#model-fish-voice').value.trim();
         await api('/api/providers/model', { method: 'POST', body: { name: 'fish', reference_id: voice } }).catch(() => {});
         await api('/api/settings', { method: 'POST', body: { values: { 'voice.voice_id': voice } } });
         toast('Models saved', '', 'ok');
       });
       $('#test-all').addEventListener('click', async () => {
-        for (const name of ['openrouter', 'gemini', 'fish']) {
+        for (const name of ['openrouter', 'gemini', 'ollama', 'fish']) {
           try {
             const result = await api('/api/providers/test', { method: 'POST', body: { name } });
             toast(`${name}: ${result.available ? 'connected' : 'not available'}`, result.detail, result.available ? 'ok' : 'warn', 6000);

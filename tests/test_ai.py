@@ -468,7 +468,8 @@ def test_policy_reports_a_request_with_no_keys_at_all(app):
     policy = _policy(app, configured=())
     plan = policy.chain("chat", route=["openrouter", "gemini"])
     assert plan.usable == []
-    assert {item.code for item in plan.blocked} == {"no_key"}
+    # the cloud engines have no key; the local one is simply not running
+    assert {item.code for item in plan.blocked} == {"no_key", "offline"}
     # both engines are named, so the user knows what to fix
     assert "OpenRouter" in plan.halt and "Gemini" in plan.halt
 
@@ -550,7 +551,8 @@ def test_policy_describe_reports_caps_and_spend(app):
     assert credit["percent"] == 25.0
     assert credit["capped"] is False
     assert described["policy"] == "preference"
-    assert described["preference"] == ["openrouter", "gemini"]
+    # the local engine is always last, as the offline safety net
+    assert described["preference"] == ["openrouter", "gemini", "ollama"]
 
 
 def test_router_audits_a_cap_switch(app):
@@ -577,3 +579,123 @@ def test_router_refuses_to_spend_when_stopped_at_a_cap(app):
         router.chat("chat", [ChatMessage("user", "hi")])
     assert "cap" in str(excinfo.value).lower()
     assert gemini.calls == 0
+
+
+# ------------------------------------------------------------------- ollama
+from ray.ai.ollama import OllamaProvider  # noqa: E402
+
+
+def _ollama(**config):
+    base = {"enabled": True, "base_url": "http://127.0.0.1:11434", "model": ""}
+    base.update(config)
+    return OllamaProvider(base, None)
+
+
+def test_ollama_needs_no_key_and_answers_locally(monkeypatch):
+    provider = _ollama(model="llama3.2:3b")
+    monkeypatch.setattr(
+        provider, "_request",
+        lambda *a, **k: httpx.Response(200, json={
+            "message": {"role": "assistant", "content": "Answered here, not in the cloud."},
+            "prompt_eval_count": 21, "eval_count": 8, "done": True,
+        }),
+    )
+    result = provider.chat([ChatMessage("user", "hello")], system="be brief")
+    assert result.provider == "ollama" and result.model == "llama3.2:3b"
+    assert result.text.startswith("Answered here")
+    assert (result.input_tokens, result.output_tokens) == (21, 8)
+    # a local model spends no money, and RAY must not claim it knows otherwise
+    assert result.cost_usd == 0.0 and result.cost_reported is False
+
+
+def test_ollama_availability_explains_how_to_start_it(monkeypatch):
+    provider = _ollama()
+
+    def refuse(*_a, **_k):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(provider, "_client", lambda: __import__("contextlib").nullcontext(
+        type("C", (), {"get": staticmethod(refuse)})()
+    ))
+    available, detail = provider.availability()
+    assert available is False
+    assert "ollama serve" in detail and "127.0.0.1:11434" in detail
+
+
+def test_ollama_with_no_models_tells_you_to_pull_one(monkeypatch):
+    provider = _ollama()
+    empty = httpx.Response(200, json={"models": []}, request=httpx.Request("GET", "http://127.0.0.1:11434/api/tags"))
+    monkeypatch.setattr(provider, "_client", lambda: __import__("contextlib").nullcontext(
+        type("C", (), {"get": staticmethod(lambda *a, **k: empty)})()
+    ))
+    available, detail = provider.availability()
+    assert available is False and "ollama pull" in detail
+
+
+def test_ollama_refuses_tools_unless_the_user_enables_them(monkeypatch):
+    provider = _ollama(model="tiny")
+    monkeypatch.setattr(provider, "_request", lambda *a, **k: httpx.Response(200, json={}))
+    with pytest.raises(ProviderError):
+        provider.chat([ChatMessage("user", "hi")], tools=[{"type": "function"}])
+
+
+def test_the_local_engine_is_the_last_resort_in_the_chain(app):
+    policy = app.router.policy
+    assert policy.preference()[-1] == "ollama"
+    app.config.set("ai.local_fallback", False)
+    assert "ollama" not in policy.preference()
+
+
+def test_router_falls_back_to_ollama_and_says_so(app):
+    """The whole point: a dead cloud engine still gets an answer - and an audit row."""
+    local = FakeProvider("ollama")
+    router = _router_with(app, {
+        "openrouter": FakeProvider("openrouter", "auth"),
+        "gemini": FakeProvider("gemini"),
+        "ollama": local,
+    })
+    router.health = lambda refresh=False: {  # noqa: ARG005
+        "openrouter": {"available": True, "detail": "ready", "model": "cloud"},
+        "gemini": {"available": False, "detail": "no key", "model": ""},
+        "ollama": {"available": True, "detail": "local", "model": "llama3.2:3b"},
+    }
+    result = router.chat("chat", [ChatMessage("user", "hello")])
+    assert result.provider == "ollama" and local.calls == 1
+
+    actions = [
+        (row["action"], row["target"])
+        for row in app.db.query("SELECT action, target FROM audit_log ORDER BY id")
+    ]
+    assert ("ai_engine_switch", "openrouter -> ollama") in actions, actions
+
+
+def test_a_local_only_setup_still_answers_without_any_key(app):
+    """Ordinary chat with no cloud key at all: Ollama is the whole chain."""
+    local = FakeProvider("ollama")
+    router = _router_with(app, {"ollama": local})
+    router.health = lambda refresh=False: {  # noqa: ARG005
+        "openrouter": {"available": False, "detail": "no key", "model": ""},
+        "gemini": {"available": False, "detail": "no key", "model": ""},
+        "ollama": {"available": True, "detail": "local", "model": "llama3.2:3b"},
+    }
+    plan = router.plan("chat")
+    assert plan.usable == ["ollama"]
+    assert router.chat("chat", [ChatMessage("user", "hi")]).provider == "ollama"
+    # planning still refuses it: a small local model is not trusted with tools
+    assert "ollama" in [item.engine for item in router.plan("planning", needs_tools=True).blocked]
+
+
+def test_without_ollama_running_the_halt_message_names_it(app):
+    router = _router_with(app, {
+        "openrouter": FakeProvider("openrouter"),
+        "gemini": FakeProvider("gemini"),
+        "ollama": FakeProvider("ollama"),
+    })
+    router.health = lambda refresh=False: {  # noqa: ARG005
+        "openrouter": {"available": False, "detail": "no key", "model": ""},
+        "gemini": {"available": False, "detail": "no key", "model": ""},
+        "ollama": {"available": False, "detail": "Ollama is not answering on http://127.0.0.1:11434. Start it with `ollama serve`", "model": ""},
+    }
+    plan = router.plan("chat")
+    assert plan.usable == [] and plan.halt
+    assert "ollama serve" in plan.halt

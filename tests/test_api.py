@@ -351,9 +351,9 @@ def test_engines_endpoint_describes_the_policy(client):
     data = client.get("/api/ai/engines")["data"]
     assert data["policy"] == "preference"
     assert data["cap_behaviour"] == "stop"
-    assert data["preference"] == ["openrouter", "gemini"]
+    assert data["preference"] == ["openrouter", "gemini", "ollama"]  # local engine is the safety net
     engines = {item["name"]: item for item in data["engines"]}
-    assert set(engines) == {"openrouter", "gemini", "fish"}
+    assert set(engines) == {"openrouter", "gemini", "ollama", "fish"}
     assert engines["openrouter"]["credit"]["monthly_usd"] == 0
     assert engines["openrouter"]["configured"] is False
     # the payload explains itself, without ever carrying a key
@@ -371,7 +371,7 @@ def test_engines_patch_saves_order_caps_and_behaviour(client, app):
     })
     assert result["ok"] is True, result
     data = result["data"]
-    assert data["preference"] == ["gemini", "openrouter"]
+    assert data["preference"] == ["gemini", "openrouter", "ollama"]
     assert data["policy"] == "credits"
     assert data["cap_behaviour"] == "switch"
     assert data["pinned"] == "gemini"
@@ -434,7 +434,7 @@ def test_preference_policy_keeps_the_saved_order(client, app, monkeypatch):
         "credits": {"openrouter": {"monthly_usd": 10}, "gemini": {"monthly_usd": 10}},
     })
     active = client.get("/api/ai/engines")["data"]["active"]
-    assert active["order"] == ["openrouter", "gemini"]
+    assert active["order"] == ["openrouter", "gemini", "ollama"]
     assert active["primary"] == "openrouter"
 
 
@@ -453,7 +453,7 @@ def test_credits_policy_puts_the_engine_with_most_headroom_first(client, app, mo
     })
     data = client.get("/api/ai/engines")["data"]
     assert data["policy"] == "credits"
-    assert data["active"]["order"] == ["gemini", "openrouter"]
+    assert data["active"]["order"] == ["gemini", "openrouter", "ollama"]
     assert data["active"]["primary"] == "gemini"
     assert data["credits"]["openrouter"]["percent"] == 90.0
 

@@ -1250,29 +1250,70 @@ def providers_voices(app, **_: Any) -> Any:
 # ------------------------------------------------------------------- voice
 @route("POST", "/api/voice/speak")
 def voice_speak(app, body=None, handler=None, **_: Any) -> Any:
+    """Speak with Fish Audio; fall back to the voice this computer already has.
+
+    A missing key, no credit or a cut connection used to mean silence. Every
+    desktop RAY runs on can speak locally, so the fallback is attempted - and
+    reported - instead of returning an error. Nothing is uploaded in that path.
+    """
+    from ..media import local_tts
+
     body = body or {}
     text = str(body.get("text", "")).strip()
     if not text:
         raise ApiError("no text to speak")
     if not app.config.get("voice.enabled", False) and not body.get("force"):
         raise ApiError("voice output is disabled. Turn it on in Settings > Voice.", 409)
+    text = text[:1200]
+    engine = "fish"
+    fmt = "mp3"
+    audio = b""
+    problem = ""
     try:
-        audio, fmt = app.router.speak(text[:1200], voice_id=body.get("voice_id") or None)
+        audio, fmt = app.router.speak(text, voice_id=body.get("voice_id") or None)
     except Exception as exc:
-        return {"spoken": False, "error": str(exc)}
+        problem = str(exc)
+    if not audio:
+        # local speech is free, private and needs no key - use it rather than fail
+        local_ready, local_label, _fix = local_tts.detect()
+        if not local_ready:
+            return {"spoken": False, "error": problem or "no speech engine is available",
+                    "local_voice": local_tts.describe()}
+        try:
+            audio, local_label = local_tts.synthesize(text)
+            engine, fmt = "local", "wav"
+            if problem:
+                app.bus.publish("voice_fallback", engine=local_label, reason=problem[:200])
+        except Exception as exc:
+            return {"spoken": False, "error": problem or str(exc), "local_voice": local_tts.describe()}
     mime = {"mp3": "audio/mpeg", "wav": "audio/wav", "opus": "audio/ogg", "pcm": "audio/L16"}.get(fmt, "audio/mpeg")
     if handler is not None:
-        handler._send(200, audio, mime, {"X-Audio-Format": fmt})
+        handler._send(200, audio, mime, {"X-Audio-Format": fmt, "X-Audio-Engine": engine})
         return b""
-    return {"spoken": True, "bytes": len(audio), "format": fmt}
+    return {
+        "spoken": True,
+        "bytes": len(audio),
+        "format": fmt,
+        "engine": engine,
+        "fallback_reason": problem if engine == "local" else "",
+    }
 
 
 @route("GET", "/api/voice/status")
 def voice_status(app, **_: Any) -> Any:
+    from ..media import local_tts
+
     fish = app.router.provider("fish")
+    local_voice = local_tts.describe()
     return {
         "enabled": bool(app.config.get("voice.enabled", False)),
         "fish_configured": bool(fish and fish.availability()[0]),
+        "local_voice": local_voice,
+        "speech_engine": (
+            "Fish Audio" if (fish and fish.availability()[0])
+            else str(local_voice["engine"]) if local_voice["available"]
+            else "none"
+        ),
         "voice_id": app.config.get("voice.voice_id", ""),
         "speed": app.config.get("voice.speed", 1.0),
         "stt": {

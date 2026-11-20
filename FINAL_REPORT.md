@@ -16,7 +16,7 @@ Everything below can be re-checked with the commands in **Verification**.
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| Engine wiring (`ray/app.py`), single data home, SQLite schema v5 + FTS5 | **Complete, tested** | `tests/test_core.py` |
+| Engine wiring (`ray/app.py`), single data home, SQLite schema v5 + FTS5, offline Ollama engine + local OS voice | **Complete, tested** | `tests/test_core.py` |
 | Encrypted credential vault (Fernet, mode 0600, env fallback, rotation) | **Complete, tested** | `tests/test_security.py` |
 | Permission levels, approval queue, emergency stop, audit log | **Complete, tested** | 14 security tests + API approval round-trip |
 | 80-tool validated command layer | **Complete, tested** | tool catalogue test, approval tests, capability probes |
@@ -35,7 +35,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 277 tests,
+Counts: 58 Python modules (~14k lines), 3 UI files (~4.5k lines), 294 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
