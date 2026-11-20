@@ -4,8 +4,8 @@ Two layers, in this order:
 
 1. **Local intents** - the deterministic parser handles the commands people use
    most. These run instantly, work offline, and cost nothing.
-2. **AI planning** - anything else goes to Grok (or Gemini) with the real tool
-   schemas. The model returns a JSON plan which is validated tool-by-tool: an
+2. **AI planning** - anything else goes to the engine the policy picks
+   (OpenRouter or Gemini, see ray/ai/policy.py) with the real tool schemas. The model returns a JSON plan which is validated tool-by-tool: an
    unknown tool or a malformed argument aborts the plan instead of being
    "helpfully" guessed at.
 
@@ -50,6 +50,7 @@ class Plan:
     confidence: float = 0.0
     notes: str = ""
     answer: str = ""  # for conversational replies with no tools
+    engine: str = ""  # which engine produced it ("" for local, offline plans)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +58,7 @@ class Plan:
             "agent": self.agent,
             "speak": self.speak,
             "source": self.source,
+            "engine": self.engine,
             "confidence": self.confidence,
             "notes": self.notes,
             "answer": self.answer,
@@ -144,7 +146,13 @@ class Planner:
         self.intents = IntentParser()
 
     # ------------------------------------------------------------------ public
-    def plan(self, text: str, agent: str | None = None, history: list[dict[str, str]] | None = None) -> Plan:
+    def plan(
+        self,
+        text: str,
+        agent: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        engine: str | None = None,
+    ) -> Plan:
         text = (text or "").strip()
         if not text:
             return Plan(goal="", answer="I did not catch a request.")
@@ -155,7 +163,7 @@ class Planner:
             if agent and self._agent_can_run(agent, local):
                 local.agent = agent
             return local
-        return self.plan_with_ai(text, agent=agent, history=history)
+        return self.plan_with_ai(text, agent=agent, history=history, engine=engine)
 
     @staticmethod
     def _agent_can_run(agent: str, plan: Plan) -> bool:
@@ -231,7 +239,11 @@ class Planner:
 
     # --------------------------------------------------------------- AI layer
     def plan_with_ai(
-        self, text: str, agent: str | None = None, history: list[dict[str, str]] | None = None
+        self,
+        text: str,
+        agent: str | None = None,
+        history: list[dict[str, str]] | None = None,
+        engine: str | None = None,
     ) -> Plan:
         context = self._context_block()
         messages: list[ChatMessage] = []
@@ -255,6 +267,7 @@ class Planner:
                 tools=schemas,
                 temperature=0.2,
                 max_tokens=1200,
+                provider=engine or None,
             )
         except ProviderError as exc:
             return Plan(
@@ -266,6 +279,7 @@ class Planner:
             )
 
         plan = self._parse_plan(result.text, text, agent)
+        plan.engine = str(getattr(result, "provider", "") or "")
         if result.tool_calls and not plan.steps:
             steps = [
                 PlanStep(call.name, call.arguments, "from provider tool call")

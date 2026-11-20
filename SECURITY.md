@@ -121,7 +121,9 @@ tail and a model prompt.
 **Enforced by.** `ray/security/credentials.py` (Fernet vault, `os.chmod(key,
 0o600)`), `ray/security/secrets.py` (`looks_secret`), `ray/core/logging_setup.py`
 (`redact` + `_RedactingFilter`), `ray/memory/store.py`, `ray/server/app.py`
-(settings guard), `ray/ai/cursor.py` (`ENV_SCRUBBED`, `_env`).
+(settings guard). Providers are plain HTTPS clients that receive exactly one
+key — their own — in an `Authorization` header; no subprocess is spawned, so no
+child process can inherit anything.
 
 **Verify.** `app.credentials.status()` never contains values; `grep -r sk- logs/`
 is empty; `pytest tests/test_security.py tests/test_hardening.py`.
@@ -274,6 +276,53 @@ no code path that talks to the network other than the one you asked for.
 **Verify.** `grep -rn "http" ray/ --include=*.py` lists only provider bases,
 DuckDuckGo search and the local server. With cloud documents off, ask a document
 question: RAY answers locally and says so.
+
+---
+
+## Clause 11a — Engine selection and credit caps
+
+**Rule.** Which AI engine answers a request MUST be decided by one documented
+policy, not by whichever adapter happens to be reachable.
+
+1. The order is explicit data: `ai.engine_order` (Settings → AI providers →
+   Engines), a per-request `engine`, or a pinned engine. No engine is chosen by
+   name inside a code path.
+2. Monthly caps (`ai.credits.<engine>.monthly_usd` / `monthly_calls`) MUST be
+   enforced **locally**, from spend recorded in the `usage` table, so a cap holds
+   even if the provider never reports a limit or copies its own invoice.
+3. When a cap is reached RAY MUST either stop and say which engine and which cap
+   was hit (`cap_behaviour = stop`, the default) or move to the next engine that
+   still has credit (`switch`). It MUST NOT silently overspend.
+4. **Every engine switch MUST be audited** — one `ai_engine_switch` row with
+   `from`, `to`, `reason` and the kind of work — and published on the event bus.
+5. **An engine change MUST NOT change a permission level.** The engine answers;
+   tools still run through `ToolRegistry.call` with the same approval gates,
+   whatever the engine is. A cheaper or different engine is never a reason to
+   allow a tool that level-1 could not reach.
+6. Keys MUST stay in the vault (Clause 4). The policy sees `configured: true`,
+   never the value.
+
+**Why.** Two failure modes are easy to ship by accident: spending someone's
+credit without asking, and "the fallback model can't call tools, so let it run
+this one directly". Both are ruled out here.
+
+**Enforced by.** `ray/ai/policy.py` (`EnginePolicy.chain`/`plan`, capability
+filter, cap arithmetic), `ray/ai/router.py` (`record_switch` → audit row +
+`ai_engine_switch` event, `route_for`), `ray/ai/cache.py`
+(`UsageTracker.month_spend`), `ray/core/database.py` (`usage.cost_usd`),
+`ray/server/app.py` (`GET`/`PATCH /api/ai/engines`, `engine` on
+`/api/command`), the *Engine policy* check in `/api/security/scan`.
+
+**Verify.**
+
+```bash
+pytest tests/test_ai.py -q -k "policy or engine or audit"     # the rule, not the vibe
+curl -s localhost:8765/api/ai/engines | python -m json.tool    # order, caps, spend
+sqlite3 "$RAY_HOME/ray.db" "select target, detail from audit_log where action='ai_engine_switch'"
+```
+
+Set a cap of `$0.01`, ask two questions, and watch RAY refuse (or switch) with a
+message that names the cap.
 
 ---
 
@@ -498,6 +547,8 @@ yourself; it does not stop you from approving a destructive action.
 | `permissions.allow_sensitive_reads` | `false` | `.env`, key stores, profiles reachable by tools/models | *Credential file reads* warning |
 | `browser.allow_private_addresses` | `false` | Fetching LAN/loopback pages | *Web fetch guard* warning |
 | `ai.allow_cloud_documents` | `false` | Document text leaves the machine | Clause 11 |
+| `ai.credits.*` | `0` (no cap) | Untracked spend on a shared or borrowed key | *Engine policy* |
+| `ai.cap_behaviour = switch` | `stop` | Spend moves to another engine at a cap | *Engine policy* |
 | `permissions.mode = open` | `standard` | Fewer confirmations for level-2 tools | *Safety policy* |
 | Emergency stop engaged | released | Blocks all level-2/3 tools | *Emergency stop* |
 

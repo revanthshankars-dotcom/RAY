@@ -100,9 +100,12 @@ try {
 try {
   await window.eval("go('settings')");
   await sleep(600);
-  const hasCredentials = window.document.querySelector('#cred-grok') !== null;
-  console.log(hasCredentials ? 'ok   settings credential inputs' : 'FAIL settings credential inputs');
-  if (!hasCredentials) failures += 1;
+  const hasCredentials = window.document.querySelector('#cred-openrouter') !== null;
+  const hasEngines = window.document.querySelector('#engine-list [data-engine]') !== null;
+  const ok = hasCredentials && hasEngines;
+  console.log(ok ? 'ok   settings credential + engine inputs'
+    : `FAIL settings inputs (credentials=${hasCredentials} engines=${hasEngines})`);
+  if (!ok) failures += 1;
 } catch (error) {
   failures += 1;
   console.log(`FAIL settings: ${error.message}`);

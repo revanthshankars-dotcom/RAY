@@ -11,11 +11,11 @@ from ray.security.credentials import CredentialError
 
 
 def test_credentials_encrypted_at_rest(app):
-    app.credentials.set("grok", "xai-test-key-1234567890")
-    row = app.db.query_one("SELECT ciphertext FROM credentials WHERE name = 'grok'")
+    app.credentials.set("openrouter", "sk-or-test-key-1234567890")
+    row = app.db.query_one("SELECT ciphertext FROM credentials WHERE name = 'openrouter'")
     assert row is not None
-    assert b"xai-test-key" not in bytes(row["ciphertext"])
-    assert app.credentials.get("grok") == "xai-test-key-1234567890"
+    assert b"sk-or-test-key" not in bytes(row["ciphertext"])
+    assert app.credentials.get("openrouter") == "sk-or-test-key-1234567890"
 
 
 def test_key_file_permissions(app):
@@ -43,21 +43,21 @@ def test_credentials_env_fallback(app, monkeypatch):
 
 def test_credentials_reject_whitespace(app):
     with pytest.raises(CredentialError):
-        app.credentials.set("grok", "has space")
+        app.credentials.set("openrouter", "has space")
 
 
 def test_credentials_delete(app):
-    app.credentials.set("grok", "key-1")
-    assert app.credentials.delete("grok") is True
-    assert app.credentials.get("grok") is None
-    assert app.credentials.delete("grok") is False
+    app.credentials.set("openrouter", "key-1")
+    assert app.credentials.delete("openrouter") is True
+    assert app.credentials.get("openrouter") is None
+    assert app.credentials.delete("openrouter") is False
 
 
 def test_key_rotation_keeps_values(app):
-    app.credentials.set("grok", "key-a")
+    app.credentials.set("openrouter", "key-a")
     app.credentials.set("gemini", "key-b")
     app.credentials.rotate_key()
-    assert app.credentials.get("grok") == "key-a"
+    assert app.credentials.get("openrouter") == "key-a"
     assert app.credentials.get("gemini") == "key-b"
 
 

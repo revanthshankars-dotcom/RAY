@@ -2,6 +2,7 @@
   "name": "RAY",
   "image": "mcr.microsoft.com/devcontainers/python:3.11",
   "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt && pip install pytest",
+  "postStartCommand": "python3 -c 'import httpx, psutil, cryptography, pypdf' 2>/dev/null || (echo 'RAY: installing dependencies...' && pip install -r requirements.txt && pip install pytest)",
   "forwardPorts": [8765],
   "portsAttributes": {
     "8765": {

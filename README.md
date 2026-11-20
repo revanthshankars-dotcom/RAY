@@ -16,9 +16,8 @@ automation — through a validated command layer instead of pretending.
   notifications. A `Think · Plan · Automate · Execute` strip in the top bar
   jumps to the matching section, and a floating dock keeps six sections one
   click away.
-- **AI**: Cursor CLI for reasoning (Grok has been retired from the default
-  routes), Gemini for knowledge/documents/images/tool planning, Fish Audio for
-  speech. All optional and swappable — everything that does not need a model
+- **AI**: OpenRouter for reasoning, chat and code (one key, many model slugs),
+  Gemini for knowledge/documents/images/tool planning, Fish Audio for speech. All optional and swappable — everything that does not need a model
   (files, tasks, notes, calendar, monitoring, automation) works offline.
 - **Footprint**: a few threads, no local model, ~120 MB of RAM in normal use.
   Designed for a Celeron-class laptop with 8 GB of RAM and no GPU.
@@ -85,47 +84,55 @@ logs/            rotating, redacted logs
 ## First run: connect your AI providers
 
 Either paste keys under **Settings → AI providers** in the running app, or export
-`RAY_GEMINI_API_KEY` / `RAY_CURSOR_API_KEY` / `RAY_FISH_API_KEY` before you start
-it — see [`SETUP.md`](SETUP.md#giving-the-agents-their-api-keys) for the exact
-steps per provider. Keys are encrypted with a local Fernet key and
-never appear in the interface, logs or `config.json`.
+`RAY_OPENROUTER_API_KEY` / `RAY_GEMINI_API_KEY` / `RAY_FISH_API_KEY` before you
+start it — see [`SETUP.md`](SETUP.md#giving-the-agents-their-api-keys) for the
+exact steps per provider. Keys are encrypted with a local Fernet key and never
+appear in the interface, logs or `config.json`.
 
 | Provider | Role | Setup | Default model |
 | --- | --- | --- | --- |
-| **Cursor** (default) | reasoning, chat, code | official CLI — `curl https://cursor.com/install -fsS \| bash`, then `cursor-agent login` | account default |
+| **OpenRouter** (default) | reasoning, chat, code | key from <https://openrouter.ai/keys> | `google/gemini-2.5-flash` |
 | **Gemini** (Google) | knowledge, long documents, images/PDF, tool planning | key from <https://aistudio.google.com/apikey> | `gemini-2.5-flash` |
 | **Fish Audio** | text to speech | key from <https://fish.audio> | `s2.1-pro-free` |
-| **Grok** (xAI, opt-in) | legacy reasoning engine | key from <https://console.x.ai> | `grok-4` |
 
-### Cursor instead of Grok
+### One key, many engines
 
-Cursor publishes no OpenAI-compatible chat endpoint, so RAY drives the official
-Cursor CLI in read-only print mode:
+OpenRouter speaks the OpenAI chat-completions API, so the model behind the key
+is a setting, not a code change: put any slug from
+<https://openrouter.ai/models> in **Settings → AI providers → Models** and RAY
+uses it. Native function calling works, which is what lets the planner use RAY's
+tools. Gemini stays the engine for attached documents (inline PDF/audio) and for
+planning when a request needs both tools and files.
 
-```
-cursor-agent --print --mode ask --output-format text "<prompt>"
-```
+### Choosing an engine (and capping what it costs)
 
-* Windows: `irm 'https://cursor.com/install?win32=true' | iex`, then
-  `cursor-agent login`.
-* RAY never passes `--force`/`--yolo`, so a reply cannot edit files or run
-  commands on your PC.
-* The CLI cannot call RAY's own tools, so **planning and tool selection keep
-  using Gemini**; chat, reasoning and code go to Cursor first.
-* An optional Cursor API key can be stored in Settings instead of logging in
-  (passed to the CLI as `CURSOR_API_KEY`).
-* If the CLI is missing, RAY says so in **Home → AI providers → Set up** and
-  falls back to Gemini for chat.
+Engine choice is a documented rule, not a guess — see **Settings → AI providers →
+Engines** and [`SECURITY.md`](SECURITY.md#engine-selection-and-credit-caps):
 
-Fish Audio: paste a **voice model id** (`reference_id`) if you want one of your
+1. **Your preference** — drag the engines into an order (default:
+   `OpenRouter → Gemini`). A per-request `engine` (the API) or a pinned engine
+   (manual policy) wins over the order.
+2. **Capability** — an engine that cannot call tools or read documents is skipped
+   for that request.
+3. **Local credit cap** — set `USD / month` and/or `calls / month` per engine,
+   `0` meaning no cap. Spend is measured on your machine from the amounts
+   providers report, so the cap holds even when a provider says nothing.
+4. **What happens at the cap** — `stop` (default) refuses and tells you which
+   engine and which cap was hit; `switch` moves to the next engine that still has
+   credit. Either way the switch is written to the audit log as
+   `ai_engine_switch`.
+
+Policy modes: `preference` (follow the order), `credits` (most remaining credit
+first), `manual` (only the pinned engine, never fall back on its own).
+
+Fish Audio: paste a **voice model id**Fish Audio: paste a **voice model id** (`reference_id`) if you want one of your
 cloned voices; leave it empty for the default voice. Click **Load voices** to
 list the voices on your account, and **Test** to verify each provider.
 
-You can also supply keys through the environment — `RAY_GEMINI_API_KEY`,
-`RAY_FISH_API_KEY` and, if you keep Grok, `RAY_GROK_API_KEY` (aliases
-`GEMINI_API_KEY`, `FISH_AUDIO_API_KEY`, `XAI_API_KEY`, `CURSOR_API_KEY` are
-recognised). A key saved in the interface wins over the environment. RAY does
-**not** read `.env` files.
+You can also supply keys through the environment — `RAY_OPENROUTER_API_KEY`,
+`RAY_GEMINI_API_KEY`, `RAY_FISH_API_KEY` (aliases `OPENROUTER_API_KEY`,
+`GEMINI_API_KEY`, `FISH_API_KEY` are recognised). A key saved in the interface
+wins over the environment. RAY does **not** read `.env` files.
 
 Without keys, RAY runs in offline mode: local commands, files, productivity,
 monitoring and automation all work; chat and speech say plainly that a provider
@@ -146,7 +153,8 @@ me", "read my clipboard", "type hello world", "press ctrl+s", "close notepad".
 
 Say **"help"** in the app for the live list, and "turn off wifi" or "send an
 email" to see RAY state plainly what it will not do. Anything longer — planning
-several steps, comparing sources, writing prose — is routed to Gemini or Cursor.
+several steps, comparing sources, writing prose — is routed to OpenRouter or
+Gemini by the engine policy.
 See [`SETUP.md`](SETUP.md#plain-english-commands-no-provider-required).
 
 ## What each section does
@@ -198,7 +206,8 @@ delete the file C:\Users\me\Desktop\old.txt      ← always asks for approval
 ```
 
 Free-form requests that are not one of the local patterns go to the planner
-(Grok), which must choose from the registered tools and is capped by step, time
+(the engine policy picks OpenRouter or Gemini), which must choose from the
+registered tools and is capped by step, time
 and budget limits. Approval-gated steps pause and show **Approve / Deny**.
 
 ## Keyboard
@@ -263,7 +272,7 @@ SECURITY_AUDIT.md        leakage review, findings, breach scenarios, accepted ri
 ray/
   core/        paths, redacting logs, config, SQLite schema/migrations, event bus
   security/    credential vault, permissions/approvals, audit, secret detection
-  ai/          base types, cursor (CLI), gemini, grok (opt-in), fish, cache/usage, router
+  ai/          base types, openrouter, gemini, fish, policy (engine + caps), router, cache
   tools/       80-tool registry + validated execution
   computer/    system metrics, apps, files (quarantine/backup), controls, shell
   productivity/ tasks, notes, reminders, calendar, focus & habits
@@ -318,7 +327,7 @@ through the UI and runs a command, failing on any error.
 | Microphone does nothing | Allow mic access for `localhost` in the browser; select the device in Voice |
 | "Volume control is unavailable" | Install `pycaw` on Windows (publisher: `pip install pycaw`) |
 | Keyboard/mouse tools refuse | `pip install pynput` and approve the action |
-| Offline chat message | Install the Cursor CLI or add a Gemini key; local tools keep working |
+| Offline chat message | Add an OpenRouter key (one key, many models) or a Gemini key; local tools keep working |
 | Running behind a reverse proxy | Set `RAY_ALLOW_REMOTE_ORIGIN=1`; cross-site writes are refused otherwise |
 
 Detailed status, including what is and is not verified, is in

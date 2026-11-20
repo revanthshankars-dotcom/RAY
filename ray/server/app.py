@@ -25,6 +25,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import __version__
+from ..ai.policy import CAP_BEHAVIOURS, CHAT_ENGINES, POLICIES
 from ..core.logging_setup import get_logger
 from ..security.credentials import PROVIDERS as CREDENTIAL_PROVIDERS
 from ..security.permissions import LEVEL_AUTO
@@ -384,6 +385,19 @@ def _int(value: Any, default: int) -> int:
         return default
 
 
+def _money(value: Any, field: str, maximum: float = 10000.0) -> float:
+    """A cap amount: a finite number between 0 and ``maximum``."""
+    if value in (None, ""):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ApiError(f"{field} must be a number")
+    if number != number or number < 0 or number > maximum:  # NaN-safe
+        raise ApiError(f"{field} must be between 0 and {maximum:g}")
+    return round(number, 2)
+
+
 # ------------------------------------------------------------------- system
 @route("GET", "/api/health")
 def health(app, **_: Any) -> Any:
@@ -425,6 +439,7 @@ def dashboard(app, **_: Any) -> Any:
         "unread_notifications": app.db.scalar("SELECT COUNT(*) FROM notifications WHERE read = 0", default=0),
         "automation": app.automation.describe(),
         "providers": app.router.health(),
+        "engine": app.router.engine_summary(),
         "offline": app.router.is_offline(),
         "widgets": app.config.get("ui.dashboard_widgets", []),
         "voice_enabled": bool(app.config.get("voice.enabled", False)),
@@ -458,12 +473,16 @@ def command(app, body=None, **_: Any) -> Any:
         raise ApiError("nothing to do - the request was empty")
     resume = body.get("resume_task_id")
     approval = body.get("approval_id")
+    engine = str(body.get("engine", "") or "").strip().lower()
+    if engine and engine not in CHAT_ENGINES:
+        raise ApiError(f"unknown engine '{engine}' - use {' or '.join(CHAT_ENGINES)}")
     result = app.orchestrator.handle(
         text,
         agent=body.get("agent"),
         history=body.get("history") if isinstance(body.get("history"), list) else None,
         approval_id=_int(approval, 0) or None,
         resume_task_id=str(resume) if resume else None,
+        engine=engine or None,
     )
     payload = result.as_dict()
     if body.get("speak") and result.speak:
@@ -901,6 +920,33 @@ def security_scan(app, **_: Any) -> Any:
         check("Credential vault", False, str(exc))
 
     try:
+        summary = app.router.engine_summary()
+        engines = app.router.policy.engines()
+        capped = [item["label"] for item in engines if item["capped"]]
+        usable = [item["label"] for item in engines if item["available"] and not item["capped"]]
+        from ..ai.policy import ENGINE_LABELS
+
+        order = " > ".join(
+            ENGINE_LABELS.get(engine, engine) for engine in app.router.policy.preference()
+        )
+        detail = (
+            f"policy '{summary['policy']}', order {order or 'unset'}, "
+            f"cap behaviour '{summary['cap_behaviour']}'"
+        )
+        if capped:
+            detail += f"; over cap: {', '.join(capped)}"
+        if not usable:
+            detail += "; no engine has a key (chat needs one)"
+        check(
+            "Engine policy",
+            True,
+            detail,
+            warn=bool(capped) or (not usable and not app.router.is_offline()),
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        check("Engine policy", False, str(exc))
+
+    try:
         from ..browser.search import UnsafeTarget, check_fetch_target
 
         try:
@@ -1026,8 +1072,9 @@ def providers(app, **_: Any) -> Any:
         "health": app.router.health(),
         "models": {
             name: app.config.get(f"ai.providers.{name}.model", "")
-            for name in ("cursor", "grok", "gemini", "fish")
+            for name in CREDENTIAL_PROVIDERS
         },
+        "engines": app.router.engine_summary(),
         "usage": app.router.usage.today(),
     }
 
@@ -1040,45 +1087,107 @@ def providers_test(app, body=None, **_: Any) -> Any:
     return app.router.test_provider(name)
 
 
-@route("GET", "/api/providers/cursor")
-def providers_cursor_status(app, **_: Any) -> Any:
-    provider = app.router.provider("cursor")
-    if provider is None:
-        raise ApiError("the cursor provider is not registered")
-    described = provider.describe()
+# ------------------------------------------------------------- engine policy
+def _engine_state(app: Any) -> dict[str, Any]:
+    health = app.router.health()
+    policy = app.router.policy
+    described = policy.describe(health)
+    plan = app.router.plan("chat", health=health)
     return {
-        "name": "cursor",
-        "binary": described.get("binary", "") or "",
-        "version": provider.version() if described.get("binary") else "",
-        "model": described.get("model", ""),
-        "workspace": described.get("workspace", ""),
-        "configured": described.get("configured", False),
-        "available": described.get("available", False),
-        "detail": described.get("detail", ""),
-        "authenticated": bool(described.get("binary")) and not any(
-            marker in str(described.get("detail", "")).lower()
-            for marker in ("not signed", "not logged")
-        ),
-        "install": {
-            "macos_linux_wsl": "curl https://cursor.com/install -fsS | bash",
-            "windows": "irm 'https://cursor.com/install?win32=true' | iex",
-            "login": "cursor-agent login",
-            "docs": "https://cursor.com/cli",
-        },
+        **described,
+        "routes": app.router.routes(),
+        "active": plan.as_dict(),
+        "summary": app.router.engine_summary(health=health),
     }
 
 
-@route("POST", "/api/providers/cursor")
-def providers_cursor_update(app, body=None, **_: Any) -> Any:
+@route("GET", "/api/ai/engines")
+def engines_get(app, **_: Any) -> Any:
+    """The engine order, caps and policy - and what they mean right now."""
+    return _engine_state(app)
+
+
+@route("PATCH", "/api/ai/engines")
+def engines_patch(app, body=None, **_: Any) -> Any:
+    """Change the engine order, caps, pinned engine or cap behaviour."""
     body = body or {}
-    for field in ("binary", "workspace", "model"):
-        if field in body:
-            app.config.set(f"ai.providers.cursor.{field}", str(body.get(field) or "").strip())
-    if "enabled" in body:
-        app.config.set("ai.providers.cursor.enabled", bool(body.get("enabled")))
-    app.router.rebuild()
-    app.audit.record("cursor_provider_updated", target="cursor", result="ok")
-    return {"saved": True, "health": app.router.health()}
+    changed: dict[str, Any] = {}
+
+    if "order" in body:
+        order = body.get("order")
+        if not isinstance(order, list) or not order:
+            raise ApiError("order must be a non-empty list of engine names")
+        cleaned: list[str] = []
+        for item in order:
+            engine = str(item or "").strip().lower()
+            if engine not in CHAT_ENGINES:
+                raise ApiError(f"unknown engine '{engine}' - use openrouter or gemini")
+            if engine not in cleaned:
+                cleaned.append(engine)
+        app.config.set("ai.engine_order", cleaned, save=False)
+        changed["order"] = cleaned
+
+    if "policy" in body:
+        policy = str(body.get("policy", "")).strip().lower()
+        if policy not in POLICIES:
+            raise ApiError(f"policy must be one of {', '.join(POLICIES)}")
+        app.config.set("ai.engine_policy", policy, save=False)
+        changed["policy"] = policy
+
+    if "cap_behaviour" in body:
+        behaviour = str(body.get("cap_behaviour", "")).strip().lower()
+        if behaviour not in CAP_BEHAVIOURS:
+            raise ApiError(f"cap_behaviour must be one of {', '.join(CAP_BEHAVIOURS)}")
+        app.config.set("ai.cap_behaviour", behaviour, save=False)
+        changed["cap_behaviour"] = behaviour
+
+    if "pinned" in body:
+        pinned = str(body.get("pinned", "") or "").strip().lower()
+        if pinned and pinned not in CHAT_ENGINES:
+            raise ApiError(f"unknown engine '{pinned}'")
+        app.config.set("ai.pinned_engine", pinned, save=False)
+        changed["pinned"] = pinned
+
+    if "credits" in body:
+        credits = body.get("credits")
+        if not isinstance(credits, dict):
+            raise ApiError("credits must be an object keyed by engine")
+        for engine, caps in credits.items():
+            name = str(engine or "").strip().lower()
+            if name not in CHAT_ENGINES:
+                raise ApiError(f"unknown engine '{name}' - caps are per engine")
+            if not isinstance(caps, dict):
+                raise ApiError(f"credits.{name} must be an object")
+            usd = _money(caps.get("monthly_usd", 0), f"credits.{name}.monthly_usd", maximum=10000)
+            calls = _money(caps.get("monthly_calls", 0), f"credits.{name}.monthly_calls", maximum=1_000_000)
+            app.config.set(f"ai.credits.{name}.monthly_usd", usd, save=False)
+            app.config.set(f"ai.credits.{name}.monthly_calls", int(calls), save=False)
+        changed["credits"] = True
+
+    if changed:
+        app.config.save()
+        app.router.rebuild()
+        app.audit.record(
+            "ai_engine_policy_updated",
+            tool="ai",
+            target=", ".join(sorted(changed)),
+            result="ok",
+            detail=changed,
+        )
+        app.bus.publish("ai_engine_policy", **{key: True for key in changed})
+    return _engine_state(app)
+
+
+@route("GET", "/api/ai/engines/models")
+def engines_models(app, **_: Any) -> Any:
+    """The OpenRouter catalogue, so the user can pick a slug from a list."""
+    provider = app.router.provider("openrouter")
+    if provider is None or not getattr(provider, "list_models", None):
+        return {"models": [], "error": "OpenRouter is not available"}
+    try:
+        return {"models": provider.list_models(limit=100), "current": provider.model}
+    except Exception as exc:
+        return {"models": [], "current": getattr(provider, "model", ""), "error": str(exc)}
 
 
 @route("POST", "/api/credentials")
@@ -1456,7 +1565,7 @@ def analytics(app, **_: Any) -> Any:
 @route("GET", "/api/settings")
 def settings_get(app, **_: Any) -> Any:
     config = app.config.all()
-    for name in ("grok", "gemini", "fish"):
+    for name in CREDENTIAL_PROVIDERS:
         provider = config.get("ai", {}).get("providers", {}).get(name, {})
         provider.pop("api_key", None)
     return {

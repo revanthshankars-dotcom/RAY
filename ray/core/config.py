@@ -48,30 +48,37 @@ DEFAULTS: dict[str, Any] = {
         ],
     },
     "ai": {
-        "default_provider": "cursor",
-        "routing_version": 2,
+        # routing_version 3 = OpenRouter replaces the Cursor CLI + Grok.
+        "routing_version": 3,
         "stream": False,
         "cache_ttl_seconds": 1800,
         "request_timeout_seconds": 60,
         "max_retries": 2,
         "allow_cloud_documents": False,
-        "daily_budget": {"cursor": 300, "grok": 300, "gemini": 400, "fish": 300},
+        # --- engine selection (see ray/ai/policy.py and SECURITY.md) --------
+        # preference: follow engine_order; credits: most headroom first;
+        # manual: only the pinned engine, never fall back on our own.
+        "engine_policy": "preference",
+        "engine_order": ["openrouter", "gemini"],
+        "pinned_engine": "",
+        # stop: say which cap was hit; switch: move to the next engine and log it.
+        "cap_behaviour": "stop",
+        # Local monthly caps per engine. 0 = no cap. Enforced on this machine.
+        "credits": {
+            "openrouter": {"monthly_usd": 0, "monthly_calls": 0},
+            "gemini": {"monthly_usd": 0, "monthly_calls": 0},
+        },
+        "daily_budget": {"openrouter": 300, "gemini": 400, "fish": 300},
         "providers": {
-            "cursor": {
+            "openrouter": {
                 "enabled": True,
-                "binary": "",
-                "workspace": "",
-                "model": "",
-                "timeout": 180,
-                "output_format": "text",
-                "extra_args": [],
-            },
-            "grok": {
-                "enabled": True,
-                "model": "grok-4",
-                "base_url": "https://api.x.ai/v1",
+                # A slug from https://openrouter.ai/models - one key, many engines.
+                "model": "google/gemini-2.5-flash",
+                "base_url": "https://openrouter.ai/api/v1",
                 "temperature": 0.4,
-                "max_tokens": 1200,
+                "max_tokens": 1600,
+                "site_url": "https://github.com/revanthshankars-dotcom/RAY",
+                "app_name": "RAY",
             },
             "gemini": {
                 "enabled": True,
@@ -166,7 +173,10 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 # Providers whose model may stay blank (the account or CLI decides).
-MODEL_OPTIONAL_PROVIDERS = {"cursor"}
+# Providers whose model slug may legitimately be blank (none today: OpenRouter
+# and Gemini both need a slug, Fish has a default). Kept as a hook for adapters
+# that discover their model at runtime.
+MODEL_OPTIONAL_PROVIDERS: set[str] = set()
 
 
 class Config:
@@ -214,11 +224,36 @@ class Config:
         saved = stored.get("ai") if isinstance(stored.get("ai"), dict) else {}
         version = int(saved.get("routing_version", 1) or 1)
         changed = False
-        if version < 2:
-            if str(saved.get("default_provider", "")) == "grok":
-                # Grok used to be the primary engine; Cursor replaced it.
-                ai["default_provider"] = "cursor"
-            ai["routing_version"] = 2
+        if version < 3:
+            # v3: the Cursor CLI and Grok are gone, OpenRouter took their place.
+            # Never keep a provider block for an engine that no longer exists.
+            providers = ai.get("providers")
+            if isinstance(providers, dict):
+                for gone in ("cursor", "grok"):
+                    providers.pop(gone, None)
+            budget = ai.get("daily_budget")
+            if isinstance(budget, dict):
+                for gone in ("cursor", "grok"):
+                    budget.pop(gone, None)
+
+            preferred = str(saved.get("default_provider", "") or "").strip().lower()
+            if preferred in ("cursor", "grok"):
+                # Cursor/Grok users get OpenRouter if it can work at all here,
+                # because that is the drop-in replacement for both; otherwise
+                # fall back to the engine that was already configured.
+                has_openrouter = bool(
+                    os.environ.get("RAY_OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+                )
+                has_gemini = bool(
+                    os.environ.get("RAY_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+                )
+                preferred = "openrouter" if has_openrouter or not has_gemini else "gemini"
+            if preferred in ("openrouter", "gemini") and "engine_order" not in saved:
+                ai["engine_order"] = [preferred] + [
+                    engine for engine in ("openrouter", "gemini") if engine != preferred
+                ]
+            ai.pop("default_provider", None)
+            ai["routing_version"] = 3
             changed = True
         return changed
 

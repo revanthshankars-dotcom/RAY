@@ -577,19 +577,20 @@ const VIEWS = {};
 /* ------------------------------------------------------------------- home */
 const PROVIDERS = [
   {
-    name: 'cursor',
-    label: 'Cursor',
-    kind: 'cli',
-    role: 'primary reasoning · chat · code (official Cursor CLI)',
-    docs: 'https://cursor.com/cli',
-    env: 'RAY_CURSOR_API_KEY',
+    name: 'openrouter',
+    label: 'OpenRouter',
+    kind: 'key',
+    role: 'reasoning · chat · code — one key, many models',
+    keyUrl: 'https://openrouter.ai/keys',
+    docs: 'https://openrouter.ai/models',
+    env: 'RAY_OPENROUTER_API_KEY',
     optional: false,
   },
   {
     name: 'gemini',
     label: 'Gemini',
     kind: 'key',
-    role: 'documents · research · images · tool planning',
+    role: 'documents · images · tool planning',
     keyUrl: 'https://aistudio.google.com/apikey',
     env: 'RAY_GEMINI_API_KEY',
     optional: false,
@@ -603,22 +604,58 @@ const PROVIDERS = [
     env: 'RAY_FISH_API_KEY',
     optional: false,
   },
+];
+
+const CHAT_ENGINES = ['openrouter', 'gemini'];
+const ENGINE_LABELS = { openrouter: 'OpenRouter', gemini: 'Gemini', fish: 'Fish Audio' };
+
+// The three policies, in the words a person needs to choose between them.
+const ENGINE_POLICIES = [
   {
-    name: 'grok',
-    label: 'Grok',
-    kind: 'key',
-    role: 'legacy reasoning engine (optional, off by default)',
-    keyUrl: 'https://console.x.ai',
-    env: 'RAY_GROK_API_KEY',
-    optional: true,
+    value: 'preference',
+    label: 'Preference — follow my order',
+    hint: 'RAY tries the engines in the order above, skipping any that cannot do the job, have no key, or are over their cap.',
+  },
+  {
+    value: 'credits',
+    label: 'Credits — most credit left first',
+    hint: 'RAY re-sorts by remaining monthly credit before each request, so the engine furthest from its cap goes first. Your order above breaks ties, and pinned still wins if set.',
+  },
+  {
+    value: 'manual',
+    label: 'Manual — only the pinned engine',
+    hint: 'Only the engine pinned below answers. No automatic fallback, even if it is over its cap or unreachable.',
   },
 ];
 
-const CURSOR_INSTALL = {
-  unix: 'curl https://cursor.com/install -fsS | bash',
-  windows: "irm 'https://cursor.com/install?win32=true' | iex",
-  login: 'cursor-agent login',
-};
+function engineNowLine(engines) {
+  // The server computes this (`active`), so the UI never re-implements the rule.
+  const active = engines?.active || {};
+  const usable = (active.usable || []).map((name) => ENGINE_LABELS[name] || name);
+  if (usable.length) {
+    return `Now: ${usable.join(' → ')}${usable.length > 1 ? ` (${usable[0]} answers)` : ''}`;
+  }
+  if (active.halt) return `Now: nothing — ${active.halt.replace(/^No engine can take this request: /, '')}`;
+  return 'Now: no engine has a key yet';
+}
+
+function engineData() {
+  return state.engines || null;
+}
+
+function engineOf(name) {
+  const engines = (engineData()?.engines || []);
+  return engines.find((item) => item.name === name) || null;
+}
+
+function capLabel(credit) {
+  if (!credit) return 'no cap';
+  const usd = Number(credit.monthly_usd || 0);
+  const calls = Number(credit.monthly_calls || 0);
+  if (!usd && !calls) return 'no cap';
+  if (usd) return `$${Number(credit.spent_usd || 0).toFixed(2)} of $${usd.toFixed(2)} · ${credit.percent}%`;
+  return `${credit.used_calls} of ${calls} calls · ${credit.percent}%`;
+}
 
 function describeProvider(name) {
   const list = state.status?.provider_detail?.providers || [];
@@ -633,44 +670,42 @@ function providerState(name) {
     available: Boolean(health.available ?? status.available ?? described.available),
     configured: Boolean(described.configured ?? status.configured ?? health.configured),
     detail: health.detail || described.detail || status.detail || '',
-    binary: described.binary || '',
-    kind: name === 'cursor' ? 'cli' : 'key',
+    kind: 'key',
+    model: described.model || '',
+    credit: engineOf(name)?.credit || null,
+    capped: Boolean(engineOf(name)?.capped),
   };
 }
 
 function providerTone(entry) {
   const current = providerState(entry.name);
-  if (current.available) return { tone: 'ok', label: entry.kind === 'cli' ? 'ready' : 'connected' };
-  if (current.configured) return { tone: 'warn', label: entry.kind === 'cli' ? 'needs sign-in' : 'unreachable' };
-  return { tone: 'bad', label: entry.kind === 'cli' ? 'CLI not found' : 'no key' };
+  if (current.capped) return { tone: 'warn', label: 'over cap' };
+  if (current.available) return { tone: 'ok', label: 'connected' };
+  if (current.configured) return { tone: 'warn', label: 'unreachable' };
+  return { tone: 'bad', label: 'no key' };
 }
 
-function openCursorHelp() {
-  const current = providerState('cursor');
+function openEngineHelp() {
+  const engines = engineData();
+  const rows = (engines?.engines || []).filter((item) => CHAT_ENGINES.includes(item.name));
   openModal(`
-    <h3>Cursor as RAY's reasoning engine</h3>
-    <p class="muted small">Cursor has no public chat API, so RAY drives the official Cursor CLI in
-      read-only print mode (<span class="mono">--mode ask</span>). Replies can never edit files or run
-      commands on this PC.</p>
+    <h3>How RAY chooses an engine</h3>
+    <p class="muted small">Which engine answers is a rule, not a guess: your preference order,
+      then what the engine can do, then its monthly credit cap, then whether it is reachable.
+      Every switch is written to the audit log.</p>
     <div class="list">
-      <div class="list-item" style="align-items:flex-start"><span class="grow">
-        <span class="title">1 · Install the CLI</span>
-        <div class="meta mono">${esc(CURSOR_INSTALL.unix)}</div>
-        <div class="meta">Windows PowerShell: <span class="mono">${esc(CURSOR_INSTALL.windows)}</span></div>
-      </span></div>
-      <div class="list-item" style="align-items:flex-start"><span class="grow">
-        <span class="title">2 · Sign in</span>
-        <div class="meta mono">${esc(CURSOR_INSTALL.login)}</div>
-        <div class="meta">…or store a Cursor API key in Settings; RAY passes it as <span class="mono">CURSOR_API_KEY</span>.</div>
-      </span></div>
-      <div class="list-item">
-        <span class="grow"><span class="title">3 · Check it</span>
-          <div class="meta">${esc(current.detail || 'Install the CLI, then run the test.')}</div></span>
-        <button class="btn sm" data-act="credential-test" data-name="cursor">Test</button>
-      </div>
+      ${rows.map((item, index) => `
+        <div class="list-item" style="align-items:flex-start"><span class="grow">
+          <span class="title">${index + 1} · ${esc(item.label)}</span>
+          <div class="meta">${esc(item.configured ? (item.detail || 'key stored') : 'no key yet')}</div>
+          <div class="meta">${esc(capLabel(item.credit))}</div>
+        </span></div>`).join('')}
     </div>
-    <div class="faint tiny" style="margin-top:10px">If the CLI is missing, chat falls back to Gemini automatically.
-      Tool planning always runs on a tool-capable model, because the CLI cannot call RAY's 80 tools.</div>
+    <div class="faint tiny" style="margin-top:10px">
+      Policy: <span class="mono">${esc((ENGINE_POLICIES.find((item) => item.value === (engines?.policy)) || {}).label || engines?.policy || 'preference')}</span> ·
+      when a cap is hit: <span class="mono">${esc(engines?.cap_behaviour || 'stop')}</span>.
+      Caps are counted on this machine from real spend, so they hold even if a provider never warns you.
+    </div>
     <div class="modal-actions">
       <button class="btn primary" data-act="go" data-section="settings">Open settings</button>
       <button class="btn" data-act="close-modal">Close</button>
@@ -680,19 +715,17 @@ function openCursorHelp() {
 function openKeyHelp() {
   openModal(`
     <h3>Connect your AI</h3>
-    <p class="muted small">Cursor is the default reasoning engine and needs no key — just the CLI and a
-      sign-in. Gemini adds documents, research and tool planning; Fish Audio speaks. Keys are encrypted
-      with a key file inside RAY's data folder and never displayed again.</p>
+    <p class="muted small">OpenRouter is the default engine: one key reaches Gemini, Claude, GPT and more,
+      and you can change the model slug any time. A Gemini key adds documents, images and tool planning on
+      Google's own endpoint; Fish Audio speaks. Keys are encrypted with a key file inside RAY's data folder
+      and never displayed again.</p>
     ${PROVIDERS.map((provider) => `
       <div class="list-item" style="align-items:flex-start">
         <span class="grow">
           <span class="title">${esc(provider.label)}${provider.optional ? ' <span class="faint tiny">(optional)</span>' : ''}</span>
           <div class="meta">${esc(provider.role)}</div>
-          ${provider.kind === 'cli'
-            ? `<div class="meta mono">${esc(CURSOR_INSTALL.unix)}</div>
-               <div class="meta">then <span class="mono">${esc(CURSOR_INSTALL.login)}</span> · <a href="${provider.docs}" target="_blank" rel="noreferrer noopener">${esc(provider.docs)}</a></div>`
-            : `<div class="meta">Get a key: <a href="${provider.keyUrl}" target="_blank" rel="noreferrer noopener">${esc(provider.keyUrl)}</a></div>
-               <div class="meta mono">or set ${esc(provider.env)}</div>`}
+          <div class="meta">Get a key: <a href="${provider.keyUrl}" target="_blank" rel="noreferrer noopener">${esc(provider.keyUrl)}</a></div>
+          <div class="meta mono">or set ${esc(provider.env)}</div>
         </span>
       </div>`).join('')}
     <div class="banner warn" style="margin-top:12px">
@@ -713,14 +746,13 @@ function providersCard() {
     const { tone, label } = providerTone(provider);
     const action = current.available
       ? `<button class="btn sm ghost" data-act="credential-test" data-name="${provider.name}">Test</button>`
-      : provider.kind === 'cli'
-        ? '<button class="btn sm primary" data-act="cursor-help">Set up</button>'
-        : '<button class="btn sm primary" data-act="go" data-section="settings">Add key</button>';
+      : '<button class="btn sm primary" data-act="go" data-section="settings">Add key</button>';
     return `<div class="provider-row">
       <span class="provider-dot ${tone}" title="${esc(label)}"></span>
       <div>
         <div class="strong">${esc(provider.label)}</div>
         <div class="faint tiny">${esc(current.detail || provider.role)}</div>
+        ${current.credit ? `<div class="faint tiny">${esc(capLabel(current.credit))}</div>` : ''}
       </div>
       <div class="row">
         <span class="pill ${tone}">${esc(label)}</span>
@@ -736,6 +768,7 @@ function providersCard() {
     <div class="row wrap" style="margin-top:10px">
       <span class="faint tiny">Local first. Nothing is sent until you ask.</span>
       <span class="spacer"></span>
+      <button class="btn sm ghost" data-act="engine-help">Engine policy</button>
       <button class="btn sm ghost" data-act="key-help">Setup guide</button>
     </div>
   </div>`;
@@ -924,7 +957,7 @@ async function sendHomeChat(text) {
 }
 
 VIEWS.home = async function () {
-  const [data, live, notes, month, analytics, security, automation, agents, media] = await Promise.all([
+  const [data, live, notes, month, analytics, security, automation, agents, media, engines] = await Promise.all([
     api('/api/dashboard'),
     api('/api/system?history=48').catch(() => ({ history: [], snapshot: null })),
     api('/api/notes').catch(() => ({ notes: [] })),
@@ -934,8 +967,13 @@ VIEWS.home = async function () {
     api('/api/automation').catch(() => null),
     api('/api/agents').catch(() => ({ agents: [] })),
     api('/api/media?limit=60').catch(() => ({ library: [] })),
+    api('/api/ai/engines').catch(() => null),
   ]);
   state.dashboard = data;
+  if (engines) state.engines = engines;
+  // The user may have navigated while these ten requests were in flight; a
+  // slow view must never paint over the section they are looking at now.
+  if (state.section !== 'home') return;
 
   const system = live.snapshot || data.system || {};
   const history = live.history || [];
@@ -953,6 +991,12 @@ VIEWS.home = async function () {
   const pending = (security?.pending || []).length;
   const auditTotal = security?.stats?.total || 0;
   const online = !data.offline;
+  const engine = data.engine || {};
+  const engineCapped = Boolean(engine.capped);
+  const engineChip = engine.primary
+    ? `<span class="pill ${engineCapped ? 'bad' : 'ok'}" title="${esc(engine.halt || `${engine.policy} policy · cap behaviour ${engine.cap_behaviour}`)}">
+         ${esc(engine.label)}${engine.monthly_usd || engine.monthly_calls ? ` · ${engine.percent}% of cap` : ' · no cap'}</span>`
+    : '<span class="pill warn">no engine</span>';
 
   const workflows = automation?.workflows || [];
   const agentList = agents.agents || [];
@@ -962,7 +1006,7 @@ VIEWS.home = async function () {
 
   view().innerHTML = `
     ${data.offline ? `<div class="banner">
-      <span>RAY is offline: local tools still work. Install the Cursor CLI or add a Gemini key to enable chat, research and tool planning.</span>
+      <span>RAY is offline: local tools still work. Add an OpenRouter key (one key, many models) or a Gemini key to enable chat, research and tool planning.</span>
       <button class="btn sm primary" data-act="key-help">Setup guide</button></div>` : ''}
     ${warnings.length ? `<div class="banner warn">⚠ ${esc(warnings.join(' · '))}</div>` : ''}
 
@@ -975,6 +1019,7 @@ VIEWS.home = async function () {
             <div class="sub">${esc(data.date_label)} · ${data.tasks_stats.open} open task(s) · ${data.reminders.length} reminder(s) in the next day</div>
             <div class="progress" title="Day ${dayPercent}% elapsed"><i style="width:${dayPercent}%"></i></div>
             <div class="row wrap" style="margin-top:10px">
+              ${engineChip}
               <span class="pill ${online ? 'ok' : 'warn'}">${online ? 'AI connected' : 'offline mode'}</span>
               <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}">${policy.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
               <span class="pill info">${data.automation.active}/${data.automation.workflows} automations</span>
@@ -2718,12 +2763,14 @@ VIEWS.developer = async function () {
 
 /* --------------------------------------------------------------- settings */
 VIEWS.settings = async function () {
-  const [settings, providers, cursorInfo] = await Promise.all([
+  const [settings, providers, engines] = await Promise.all([
     api('/api/settings'),
     api('/api/providers'),
-    api('/api/providers/cursor').catch(() => null),
+    api('/api/ai/engines').catch(() => null),
   ]);
   state.settings = settings;
+  state.engines = engines;
+  if (state.section !== 'settings') return;
   const config = settings.config;
   const credentials = providers.credentials;
   view().innerHTML = `
@@ -2739,48 +2786,84 @@ VIEWS.settings = async function () {
   const panels = {
     ai: `
       <div class="card">
-        <div class="card-head"><h2>Cursor CLI</h2><span class="spacer"></span>
-          <span class="pill ${cursorInfo?.available ? 'ok' : cursorInfo?.binary ? 'warn' : 'bad'}">${cursorInfo?.available ? 'ready' : cursorInfo?.binary ? 'needs sign-in' : 'not installed'}</span></div>
-        <p class="faint small">RAY's default reasoning engine. The official Cursor CLI is called in read-only
-          print mode (<span class="mono">--mode ask</span>); replies never edit files or run commands.</p>
-        <div class="form-row" style="margin-top:10px">
-          <label class="field"><span>CLI binary (blank = auto-detect)</span>
-            <input type="text" id="cursor-binary" value="${esc(config.ai.providers.cursor?.binary || '')}" placeholder="cursor-agent" /></label>
-          <label class="field"><span>Working folder (blank = RAY home)</span>
-            <input type="text" id="cursor-workspace" value="${esc(config.ai.providers.cursor?.workspace || '')}" placeholder="optional" /></label>
-          <label class="field"><span>Model (blank = account default)</span>
-            <input type="text" id="cursor-model" value="${esc(config.ai.providers.cursor?.model || '')}" placeholder="auto" /></label>
+        <div class="card-head"><h2>Engines</h2><span class="spacer"></span>
+          <span class="pill info">${esc(engines?.policy || 'preference')}</span></div>
+        <p class="faint small">Drag to set the order RAY tries engines in. The caps below are counted
+          on this machine from real spend each calendar month — when one is reached RAY either stops and
+          tells you, or switches to the next engine, depending on the setting.</p>
+        <div class="engine-list" id="engine-list">
+          ${(engines?.preference || CHAT_ENGINES).map((name, index) => {
+            const item = (engines?.engines || []).find((entry) => entry.name === name) || { name, label: ENGINE_LABELS[name] };
+            const credit = item.credit || {};
+            return `<div class="engine-row" draggable="true" data-engine="${esc(name)}">
+              <span class="engine-grip" title="Drag to reorder">⠿</span>
+              <div class="grow">
+                <div class="strong">${esc(item.label || ENGINE_LABELS[name] || name)}
+                  <span class="pill ${item.available ? 'ok' : item.configured ? 'warn' : 'bad'}">
+                    ${item.available ? 'ready' : item.configured ? 'unreachable' : 'no key'}</span>
+                  ${item.capped ? '<span class="pill bad">over cap</span>' : ''}</div>
+                <div class="faint tiny">${esc(item.detail || (index === 0 ? 'tried first' : 'fallback'))}</div>
+              </div>
+              <div class="row">
+                <label class="field compact"><span>USD / month</span>
+                  <input type="number" min="0" step="0.5" id="cap-usd-${esc(name)}" value="${Number(credit.monthly_usd || 0)}" /></label>
+                <label class="field compact"><span>Calls / month</span>
+                  <input type="number" min="0" step="10" id="cap-calls-${esc(name)}" value="${Number(credit.monthly_calls || 0)}" /></label>
+                <span class="faint tiny" id="cap-label-${esc(name)}">${esc(capLabel(credit))}</span>
+              </div>
+              <div class="row">
+                <button class="btn sm ghost" data-engine-up="${esc(name)}" title="Move up">↑</button>
+                <button class="btn sm ghost" data-engine-down="${esc(name)}" title="Move down">↓</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="form-row" style="margin-top:12px">
+          <label class="field grow"><span>Policy</span>
+            <select id="engine-policy">
+              ${ENGINE_POLICIES.map((item) => `<option value="${item.value}" ${engines?.policy === item.value ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+            </select></label>
+          <label class="field"><span>When a cap is hit</span>
+            <select id="cap-behaviour">
+              <option value="stop" ${engines?.cap_behaviour !== 'switch' ? 'selected' : ''}>stop and tell me</option>
+              <option value="switch" ${engines?.cap_behaviour === 'switch' ? 'selected' : ''}>switch to the next engine</option>
+            </select></label>
+          <label class="field"><span>Pin an engine (manual only)</span>
+            <select id="pinned-engine">
+              <option value="">none</option>
+              ${CHAT_ENGINES.map((name) => `<option value="${name}" ${engines?.pinned === name ? 'selected' : ''}>${ENGINE_LABELS[name]}</option>`).join('')}
+            </select></label>
+        </div>
+        <div class="faint tiny" id="policy-hint" style="margin-top:10px"></div>
+        <div class="row wrap" style="margin-top:8px">
+          <span class="pill info" id="engine-now">${esc(engineNowLine(engines))}</span>
+          <span class="faint tiny">from the saved settings — drag and press Save to change it</span>
         </div>
         <div class="row wrap" style="margin-top:10px">
-          <button class="btn primary" id="save-cursor">Save</button>
-          <button class="btn" data-act="credential-test" data-name="cursor">Test CLI</button>
-          ${cursorInfo?.version ? `<span class="faint tiny">${esc(cursorInfo.version)}</span>` : ''}
+          <button class="btn primary" id="save-engines">Save engine settings</button>
+          <button class="btn ghost" data-act="engine-help">How this works</button>
+          <span class="spacer"></span>
+          <span class="faint tiny">0 means no cap. Every switch is logged to the audit trail.</span>
         </div>
-        <div class="mono-wrap" style="margin-top:10px">${cursorInfo?.binary ? esc(cursorInfo.binary) : 'not found on PATH'}${cursorInfo?.detail ? ` · ${esc(cursorInfo.detail)}` : ''}</div>
-        <div class="section-title" style="margin-top:14px">Install &amp; sign in</div>
-        <div class="mono-wrap">${esc(CURSOR_INSTALL.unix)}<br/>${esc(CURSOR_INSTALL.windows)}<br/>${esc(CURSOR_INSTALL.login)}</div>
-        <div class="faint tiny" style="margin-top:6px">Docs:
-          <a href="https://cursor.com/cli" target="_blank" rel="noreferrer noopener">cursor.com/cli</a></div>
       </div>
       <div class="card">
         <div class="card-head"><h2>Credentials</h2><span class="spacer"></span>
         <span class="pill">stored encrypted on this machine</span></div>
         <p class="faint small">Keys are encrypted with a local key file and never sent to the interface after saving.
-          Cursor needs no key at all — use <span class="mono">cursor-agent login</span>, or paste a Cursor API key here if you prefer.
-          Everything else can also come from environment variables.</p>
+          Everything can also come from environment variables, which is what CI and Codespaces use.</p>
         <div class="col" style="margin-top:12px">
           ${credentials.map((credential) => `
             <div class="card tight">
               <div class="credential-row">
                 <div>
-                  <strong style="text-transform:capitalize">${esc(credential.name)}</strong>${credential.name === 'cursor' ? ' <span class="faint tiny">(optional API key)</span>' : ''}
+                  <strong>${esc(ENGINE_LABELS[credential.name] || credential.name)}</strong>
                   <div class="faint tiny">
                     ${credential.configured
                       ? `configured (${esc(credential.source)})${credential.last_test_detail ? ` · ${esc(credential.last_test_detail)}` : ''}`
                       : 'not configured'}
                   </div>
                 </div>
-                <input type="password" id="cred-${credential.name}" placeholder="${credential.name === 'cursor' ? 'optional — login works too' : 'paste API key'}" />
+                <input type="password" id="cred-${credential.name}" placeholder="paste API key" autocomplete="off" />
                 <div class="row">
                   <button class="btn sm" data-act="credential-save" data-name="${credential.name}">Save &amp; test</button>
                   <button class="btn sm ghost" data-act="credential-test" data-name="${credential.name}">Test</button>
@@ -2793,9 +2876,10 @@ VIEWS.settings = async function () {
       <div class="card">
         <div class="card-head"><h2>Models &amp; routing</h2></div>
         <div class="form-row">
-          ${['cursor', 'gemini', 'grok', 'fish'].map((name) => `
-            <label class="field"><span>${name === 'cursor' ? 'cursor model (blank = auto)' : `${name} model`}</span>
-              <input type="text" id="model-${name}" value="${esc(config.ai.providers[name]?.model || '')}" />
+          ${['openrouter', 'gemini', 'fish'].map((name) => `
+            <label class="field"><span>${ENGINE_LABELS[name] || name} model</span>
+              <input type="text" id="model-${name}" value="${esc(config.ai.providers[name]?.model || '')}"
+                placeholder="${name === 'openrouter' ? 'google/gemini-2.5-flash' : name === 'gemini' ? 'gemini-2.5-flash' : 's2.1-pro-free'}" />
             </label>`).join('')}
           <label class="field"><span>Fish Audio voice id</span>
             <input type="text" id="model-fish-voice" value="${esc(config.ai.providers.fish?.reference_id || '')}" placeholder="reference_id" /></label>
@@ -2823,7 +2907,7 @@ VIEWS.settings = async function () {
           <tbody>${Object.entries(providers.providers.routes).map(([task, chain]) => `
             <tr><td class="strong">${esc(task)}</td><td>${chain.map(esc).join(' → ')}</td></tr>`).join('')}</tbody>
         </table>
-        <div class="faint tiny" style="margin-top:8px">RAY monitors daily call budgets and falls back when a provider fails. Nothing is sent to a provider that is not needed.</div>
+        <div class="faint tiny" style="margin-top:8px">This is the static ranking per task; your engine order, the local credit caps and provider health can move a request down that list, and every move is logged. Nothing is sent to an engine that is not needed.</div>
       </div>`,
     general: `
       <div class="card">
@@ -2917,26 +3001,88 @@ VIEWS.settings = async function () {
     };
 
     if (tab === 'ai') {
-      const cursorSave = $('#save-cursor');
-      if (cursorSave) {
-        cursorSave.addEventListener('click', async () => {
+      const policySelect = $('#engine-policy');
+      if (policySelect) {
+        const hint = $('#policy-hint');
+        const syncPolicy = () => {
+          const chosen = ENGINE_POLICIES.find((item) => item.value === policySelect.value);
+          if (hint && chosen) hint.textContent = chosen.hint;
+        };
+        policySelect.addEventListener('change', syncPolicy);
+        syncPolicy();
+      }
+
+      // Drag-to-order + arrow buttons. The DOM order is the source of truth.
+      const list = $('#engine-list');
+      if (list) {
+        let dragged = null;
+        list.addEventListener('dragstart', (event) => {
+          const row = event.target.closest('[data-engine]');
+          if (!row) return;
+          dragged = row;
+          row.classList.add('dragging');
+          event.dataTransfer.effectAllowed = 'move';
+          try { event.dataTransfer.setData('text/plain', row.dataset.engine); } catch (error) { /* older browsers */ }
+        });
+        list.addEventListener('dragend', () => {
+          if (dragged) dragged.classList.remove('dragging');
+          dragged = null;
+        });
+        list.addEventListener('dragover', (event) => {
+          event.preventDefault();
+          const row = event.target.closest('[data-engine]');
+          if (!row || !dragged || row === dragged) return;
+          const rect = row.getBoundingClientRect();
+          const after = event.clientY > rect.top + rect.height / 2;
+          list.insertBefore(dragged, after ? row.nextSibling : row);
+        });
+        list.addEventListener('drop', (event) => event.preventDefault());
+        const move = (name, direction) => {
+          const row = list.querySelector(`[data-engine="${name}"]`);
+          if (!row) return;
+          const sibling = direction === 'up' ? row.previousElementSibling : row.nextElementSibling;
+          if (sibling) list.insertBefore(row, direction === 'up' ? sibling : sibling.nextSibling);
+        };
+        $$('[data-engine-up]').forEach((button) => button.addEventListener('click', () => move(button.dataset.engineUp, 'up')));
+        $$('[data-engine-down]').forEach((button) => button.addEventListener('click', () => move(button.dataset.engineDown, 'down')));
+      }
+      const saveEngines = $('#save-engines');
+      if (saveEngines) {
+        saveEngines.addEventListener('click', async () => {
+          const order = Array.from(document.querySelectorAll('#engine-list [data-engine]')).map((node) => node.dataset.engine);
+          const credits = {};
+          for (const name of CHAT_ENGINES) {
+            credits[name] = {
+              monthly_usd: Number($(`#cap-usd-${name}`)?.value || 0),
+              monthly_calls: Number($(`#cap-calls-${name}`)?.value || 0),
+            };
+          }
           try {
-            await api('/api/providers/cursor', {
-              method: 'POST',
+            state.engines = await api('/api/ai/engines', {
+              method: 'PATCH',
               body: {
-                binary: $('#cursor-binary').value.trim(),
-                workspace: $('#cursor-workspace').value.trim(),
-                model: $('#cursor-model').value.trim(),
+                order,
+                credits,
+                policy: $('#engine-policy').value,
+                cap_behaviour: $('#cap-behaviour').value,
+                pinned: $('#pinned-engine').value,
               },
             });
-            toast('Cursor settings saved', '', 'ok');
+            // Update in place instead of re-rendering: keeps the drag order,
+            // the focus, and the scroll position exactly where the user left them.
+            const now = $('#engine-now');
+            if (now) now.textContent = engineNowLine(state.engines);
+            for (const name of CHAT_ENGINES) {
+              const label = $(`#cap-label-${name}`);
+              if (label) label.textContent = capLabel(state.engines.credits?.[name]);
+            }
+            toast('Engine settings saved', `policy: ${state.engines.policy} · ${state.engines.cap_behaviour}`, 'ok');
             await refreshStatus();
-            await VIEWS.settings();
-          } catch (error) { toast('Could not save', error.message, 'error'); }
+          } catch (error) { toast('Could not save engines', error.message, 'error'); }
         });
       }
       $('#save-models').addEventListener('click', async () => {
-        for (const name of ['cursor', 'gemini', 'grok', 'fish']) {
+        for (const name of ['openrouter', 'gemini', 'fish']) {
           const value = $(`#model-${name}`).value.trim();
           if (value) await api('/api/providers/model', { method: 'POST', body: { name, model: value } }).catch(() => {});
         }
@@ -2946,7 +3092,7 @@ VIEWS.settings = async function () {
         toast('Models saved', '', 'ok');
       });
       $('#test-all').addEventListener('click', async () => {
-        for (const name of ['cursor', 'gemini', 'fish']) {
+        for (const name of ['openrouter', 'gemini', 'fish']) {
           try {
             const result = await api('/api/providers/test', { method: 'POST', body: { name } });
             toast(`${name}: ${result.available ? 'connected' : 'not available'}`, result.detail, result.available ? 'ok' : 'warn', 6000);
@@ -3031,7 +3177,7 @@ const ACTIONS = {
   go: (dataset) => { closeModal(); go(dataset.section); },
   palette: () => openPalette(),
   'key-help': () => openKeyHelp(),
-  'cursor-help': () => openCursorHelp(),
+  'engine-help': () => openEngineHelp(),
   'home-chat-tab': (dataset) => {
     state.homeChat = state.homeChat || { messages: [] };
     state.homeChat.agent = dataset.agent || 'assistant';

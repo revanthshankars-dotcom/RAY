@@ -1,7 +1,8 @@
-"""Provider request/response handling, error mapping, routing and caching.
+"""Provider request/response handling, error mapping, engine policy and caching.
 
 No network calls: HTTP responses are injected so parsing and failure behaviour
-can be tested deterministically.
+can be tested deterministically, and the policy is exercised against the real
+``usage`` table with fake provider objects.
 """
 
 from __future__ import annotations
@@ -21,44 +22,63 @@ from ray.ai.base import (
     ToolCall,
     map_http_error,
 )
-from ray.ai.cache import ResponseCache
-from ray.ai.cursor import CursorProvider
+from ray.ai.cache import ResponseCache, UsageTracker
 from ray.ai.fish import FishAudioProvider
 from ray.ai.gemini import GeminiProvider
-from ray.ai.grok import GrokProvider
+from ray.ai.openrouter import OpenRouterProvider
+from ray.ai.policy import EnginePolicy
 from ray.ai.router import ProviderRouter
 
 
-def grok_config(**overrides):
-    config = {"enabled": True, "model": "grok-4", "base_url": "https://api.x.ai/v1", "timeout": 10}
+def openrouter_config(**overrides):
+    config = {
+        "enabled": True,
+        "model": "google/gemini-2.5-flash",
+        "base_url": "https://openrouter.ai/api/v1",
+        "timeout": 10,
+    }
     config.update(overrides)
     return config
 
 
-def test_grok_parses_text_and_usage(monkeypatch):
-    provider = GrokProvider(grok_config(), "test-key")
+def test_openrouter_parses_text_cost_and_usage(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "sk-or-test")
     payload = {
-        "id": "abc",
-        "model": "grok-4",
+        "id": "gen-1",
+        "model": "google/gemini-2.5-flash",
         "choices": [{"message": {"content": "Hello there."}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 11, "completion_tokens": 4},
+        "usage": {"prompt_tokens": 11, "completion_tokens": 4, "cost": 0.00042},
     }
-    monkeypatch.setattr(provider, "_request", lambda *a, **k: httpx.Response(200, json=payload))
+    seen = {}
+
+    def fake_request(method, url, **kwargs):
+        seen.update({"method": method, "url": url, "kwargs": kwargs})
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(provider, "_request", fake_request)
     result = provider.chat([ChatMessage("user", "hi")])
     assert result.text == "Hello there."
     assert result.input_tokens == 11
     assert result.output_tokens == 4
-    assert result.provider == "grok"
+    assert result.provider == "openrouter"
+    assert result.cost_usd == pytest.approx(0.00042)
+    assert result.cost_reported is True
+    # the request is the OpenAI shape, with the configured slug and a bearer key
+    assert seen["url"].endswith("/chat/completions")
+    assert seen["kwargs"]["json_body"]["model"] == "google/gemini-2.5-flash"
+    assert seen["kwargs"]["headers"]["Authorization"] == "Bearer sk-or-test"
+    assert seen["kwargs"]["json_body"]["usage"] == {"include": True}
 
 
-def test_grok_parses_tool_calls(monkeypatch):
-    provider = GrokProvider(grok_config(), "test-key")
+def test_openrouter_parses_tool_calls(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "sk-or-test")
     payload = {
         "choices": [{
             "message": {
                 "content": "",
                 "tool_calls": [{
                     "id": "call_1",
+                    "type": "function",
                     "function": {"name": "search_files", "arguments": '{"query": "pdf"}'},
                 }],
             },
@@ -69,10 +89,11 @@ def test_grok_parses_tool_calls(monkeypatch):
     result = provider.chat([ChatMessage("user", "find pdfs")], tools=[{"type": "function"}])
     assert result.tool_calls[0].name == "search_files"
     assert result.tool_calls[0].arguments == {"query": "pdf"}
+    assert result.tool_calls[0].id == "call_1"
 
 
-def test_grok_rejects_bad_json_tool_arguments(monkeypatch):
-    provider = GrokProvider(grok_config(), "test-key")
+def test_openrouter_rejects_bad_json_tool_arguments(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "sk-or-test")
     payload = {"choices": [{"message": {"content": "", "tool_calls": [
         {"id": "1", "function": {"name": "x", "arguments": "{not json"}}]}}], "usage": {}}
     monkeypatch.setattr(provider, "_request", lambda *a, **k: httpx.Response(200, json=payload))
@@ -80,8 +101,8 @@ def test_grok_rejects_bad_json_tool_arguments(monkeypatch):
     assert "_raw" in result.tool_calls[0].arguments
 
 
-def test_grok_requires_api_key():
-    provider = GrokProvider(grok_config(), None)
+def test_openrouter_requires_api_key():
+    provider = OpenRouterProvider(openrouter_config(), None)
     available, detail = provider.availability()
     assert available is False
     assert "key" in detail.lower()
@@ -89,32 +110,25 @@ def test_grok_requires_api_key():
         provider.chat([ChatMessage("user", "hi")])
 
 
-def test_grok_disabled_provider():
-    provider = GrokProvider(grok_config(enabled=False), "key")
+def test_openrouter_disabled_provider():
+    provider = OpenRouterProvider(openrouter_config(enabled=False), "key")
     assert provider.availability()[0] is False
 
 
-@pytest.mark.parametrize(
-    "status,expected",
-    [
-        (401, ProviderAuthError),
-        (403, ProviderAuthError),
-        (429, ProviderQuotaError),
-        (402, ProviderQuotaError),
-        (400, ProviderError),
-        (500, ProviderError),
-    ],
-)
-def test_error_mapping(status, expected):
-    response = httpx.Response(status, json={"error": {"message": "detail here"}})
-    error = map_http_error("grok", response)
-    assert isinstance(error, expected)
-    assert "grok" in error.message
+def test_openrouter_maps_402_to_quota(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "sk-or-test")
+
+    def quota(*args, **kwargs):
+        raise ProviderQuotaError("openrouter: insufficient credit")
+
+    monkeypatch.setattr(provider, "_request", quota)
+    with pytest.raises(ProviderQuotaError):
+        provider.chat([ChatMessage("user", "hi")])
 
 
-def test_grok_propagates_auth_error(monkeypatch):
-    provider = GrokProvider(grok_config(), "bad-key")
-    error = ProviderAuthError("grok: the API key was rejected (HTTP 401).")
+def test_openrouter_propagates_auth_error(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "bad-key")
+    error = ProviderAuthError("openrouter: the API key was rejected (HTTP 401).")
 
     def raise_error(*args, **kwargs):
         raise error
@@ -124,15 +138,40 @@ def test_grok_propagates_auth_error(monkeypatch):
         provider.chat([ChatMessage("user", "hi")])
 
 
-def test_grok_test_connection(monkeypatch):
-    provider = GrokProvider(grok_config(), "key")
+def test_openrouter_test_connection_reports_remaining_credit(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "sk-or-test")
     monkeypatch.setattr(
         provider, "_request",
-        lambda *a, **k: httpx.Response(200, json={"data": [{"id": "grok-4"}, {"id": "grok-3"}]}),
+        lambda *a, **k: httpx.Response(200, json={"data": {"label": "ray", "limit": 10, "usage": 2.5}}),
     )
     health = provider.test_connection()
     assert health.available is True
-    assert "2 models" in health.detail
+    assert "$7.50" in health.detail and "ray" in health.detail
+
+
+def test_openrouter_test_connection_reports_a_rejected_key(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "bad")
+
+    def reject(*args, **kwargs):
+        raise ProviderAuthError("openrouter: the API key was rejected (HTTP 401).")
+
+    monkeypatch.setattr(provider, "_request", reject)
+    health = provider.test_connection()
+    assert health.available is False
+    assert "rejected" in health.detail
+
+
+def test_openrouter_lists_models(monkeypatch):
+    provider = OpenRouterProvider(openrouter_config(), "sk-or-test")
+    payload = {"data": [
+        {"id": "google/gemini-2.5-flash", "name": "Gemini 2.5 Flash",
+         "supported_parameters": ["tools", "temperature"], "context_length": 1000000},
+        {"id": "no-tools/model", "name": "Text only"},
+    ]}
+    monkeypatch.setattr(provider, "_request", lambda *a, **k: httpx.Response(200, json=payload))
+    models = provider.list_models()
+    assert [item["id"] for item in models] == ["google/gemini-2.5-flash", "no-tools/model"]
+    assert models[0]["tools"] is True and models[1]["tools"] is False
 
 
 def test_gemini_body_includes_system_tools_and_files():
@@ -219,7 +258,7 @@ class FakeProvider:
         self.text = text
         self.config = {"enabled": True}
         self.supports_documents = name == "gemini"
-        self.supports_tools = name in ("gemini", "grok")
+        self.supports_tools = name in ("gemini", "openrouter")
 
     def availability(self):
         return True, "ready"
@@ -237,7 +276,7 @@ class FakeProvider:
         if self.behaviour == "boom":
             raise RuntimeError("unexpected")
         return ChatResult(text=self.text, provider=self.name, model=self.model,
-                          input_tokens=3, output_tokens=2)
+                          input_tokens=3, output_tokens=2, cost_usd=0.001, cost_reported=True)
 
     def describe(self):
         return {"name": self.name}
@@ -255,48 +294,69 @@ def _router_with(app, providers):
     return router
 
 
-def test_router_prefers_primary_provider(app):
-    cursor = FakeProvider("cursor")
+def test_router_prefers_primary_engine(app):
+    openrouter = FakeProvider("openrouter")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
+    router = _router_with(app, {"openrouter": openrouter, "gemini": gemini})
     result = router.chat("reasoning", [ChatMessage("user", "think")])
-    assert result.provider == "cursor"
+    assert result.provider == "openrouter"
     assert gemini.calls == 0
 
 
-def test_router_routes_chat_to_cursor_and_planning_to_gemini(app):
-    router = _router_with(app, {"cursor": FakeProvider("cursor"), "gemini": FakeProvider("gemini")})
-    assert router.resolve_chain("chat")[0] == "cursor"
+def test_router_routes_chat_to_openrouter_and_planning_to_gemini(app):
+    router = _router_with(app, {"openrouter": FakeProvider("openrouter"), "gemini": FakeProvider("gemini")})
+    assert router.resolve_chain("chat")[0] == "openrouter"
     assert router.resolve_chain("planning")[0] == "gemini"
-    assert "grok" not in router.resolve_chain("chat")
+    assert router.resolve_chain("code")[0] == "openrouter"
+    assert router.resolve_chain("research")[0] == "openrouter"
 
 
-def test_router_skips_providers_without_tool_support(app):
-    cursor = FakeProvider("cursor")
+def test_router_honours_the_configured_engine_order(app):
+    app.config.set("ai.engine_order", ["gemini", "openrouter"], save=False)
+    router = _router_with(app, {"openrouter": FakeProvider("openrouter"), "gemini": FakeProvider("gemini")})
+    # general chat follows the user's order...
+    assert router.resolve_chain("chat")[0] == "gemini"
+    assert router.chat("chat", [ChatMessage("user", "hi")]).provider == "gemini"
+    # ...while planning keeps the ranking that can do the job
+    assert router.resolve_chain("planning")[0] == "gemini"
+
+
+def test_router_honours_a_per_request_engine(app):
+    openrouter = FakeProvider("openrouter")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
+    router = _router_with(app, {"openrouter": openrouter, "gemini": gemini})
+    result = router.chat("chat", [ChatMessage("user", "hi")], provider="gemini")
+    assert result.provider == "gemini"
+    assert openrouter.calls == 0
+
+
+def test_router_skips_engines_without_tool_support(app):
+    openrouter = FakeProvider("openrouter")
+    gemini = FakeProvider("gemini")
+    openrouter.supports_tools = False
+    router = _router_with(app, {"openrouter": openrouter, "gemini": gemini})
     tools = [{"type": "function", "function": {"name": "list_files", "parameters": {}}}]
     result = router.chat("planning", [ChatMessage("user", "list my files")], tools=tools)
     assert result.provider == "gemini"
-    assert cursor.calls == 0
+    assert openrouter.calls == 0
 
 
 def test_router_falls_back_on_failure(app):
-    cursor = FakeProvider("cursor", behaviour="auth")
+    openrouter = FakeProvider("openrouter", behaviour="auth")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
+    router = _router_with(app, {"openrouter": openrouter, "gemini": gemini})
     result = router.chat("reasoning", [ChatMessage("user", "think")])
     assert result.provider == "gemini"
     assert gemini.calls == 1
 
 
-def test_router_raises_when_all_providers_fail(app):
-    cursor = FakeProvider("cursor", behaviour="quota")
+def test_router_raises_when_all_engines_fail(app):
+    openrouter = FakeProvider("openrouter", behaviour="quota")
     gemini = FakeProvider("gemini", behaviour="timeout")
-    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
+    router = _router_with(app, {"openrouter": openrouter, "gemini": gemini})
     with pytest.raises(ProviderUnavailable) as excinfo:
         router.chat("reasoning", [ChatMessage("user", "x")])
-    assert "cursor" in str(excinfo.value) or "provider" in str(excinfo.value).lower()
+    assert "openrouter" in str(excinfo.value) or "engine" in str(excinfo.value).lower()
 
 
 def test_router_offline_message_mentions_settings(app):
@@ -317,23 +377,24 @@ def test_router_caches_identical_prompts(app):
     assert gemini.calls == 1
 
 
-def test_router_budget_blocks_provider(app):
-    app.config.set("ai.daily_budget.cursor", 1, save=False)
-    cursor = FakeProvider("cursor")
+def test_router_budget_blocks_an_engine(app):
+    app.config.set("ai.daily_budget.openrouter", 1, save=False)
+    openrouter = FakeProvider("openrouter")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
+    router = _router_with(app, {"openrouter": openrouter, "gemini": gemini})
     router.chat("reasoning", [ChatMessage("user", "one")])
     result = router.chat("reasoning", [ChatMessage("user", "two")])
     assert result.provider == "gemini"
 
 
-def test_router_records_usage(app):
-    cursor = FakeProvider("cursor")
-    router = _router_with(app, {"cursor": cursor})
+def test_router_records_usage_and_cost(app):
+    openrouter = FakeProvider("openrouter")
+    router = _router_with(app, {"openrouter": openrouter})
     router.chat("chat", [ChatMessage("user", "hi")])
     usage = router.usage.today()
     assert usage["totals"]["calls"] >= 1
-    assert router.usage.calls_today("cursor") >= 1
+    assert router.usage.calls_today("openrouter") >= 1
+    assert router.usage.month_spend("openrouter")["cost_usd"] == pytest.approx(0.001)
 
 
 def test_cache_expiry(app):
@@ -355,124 +416,164 @@ def test_http_timeout_maps_to_provider_timeout():
     assert "service error" in error.message.lower()
 
 
-# --------------------------------------------------------------- cursor (CLI)
-def _fake_cli(tmp_path, body: str) -> str:
-    script = tmp_path / "cursor-agent"
-    script.write_text("#!/usr/bin/env python3\n" + body)
-    script.chmod(0o755)
-    return str(script)
 
 
-def cursor_config(binary: str, **overrides):
-    config = {"enabled": True, "binary": binary, "timeout": 10, "output_format": "text"}
-    config.update(overrides)
-    return config
+# --------------------------------------------------------------- engine policy
+class FakeCredentials:
+    """Only the two methods the policy uses."""
+
+    def __init__(self, configured=("openrouter", "gemini")):
+        self.configured = set(configured)
+
+    def get(self, name):
+        return "key" if name in self.configured else None
+
+    def source(self, name):
+        return "vault" if name in self.configured else "unset"
 
 
-def test_cursor_reports_a_missing_cli(monkeypatch):
-    monkeypatch.setattr("ray.ai.cursor.shutil.which", lambda name: None)
-    provider = CursorProvider({"enabled": True, "binary": "/definitely/not/here"})
-    available, detail = provider.availability()
-    assert available is False
-    assert "Cursor CLI not found" in detail
-    assert provider.configured is False
-    with pytest.raises(ProviderUnavailable):
-        provider.chat([ChatMessage("user", "hi")])
+def _policy(app, configured=("openrouter", "gemini"), order=("openrouter", "gemini"),
+            policy="preference", behaviour="stop", credits=None):
+    app.config.set("ai.engine_order", list(order), save=False)
+    app.config.set("ai.engine_policy", policy, save=False)
+    app.config.set("ai.cap_behaviour", behaviour, save=False)
+    for engine, caps in (credits or {}).items():
+        for key, value in caps.items():
+            app.config.set(f"ai.credits.{engine}.{key}", value, save=False)
+    return EnginePolicy(app.config, UsageTracker(app.db), FakeCredentials(configured))
 
 
-def test_cursor_chat_runs_read_only_print_mode(tmp_path, monkeypatch):
-    log = tmp_path / "args.json"
-    cli = _fake_cli(
-        tmp_path,
-        "import json, os, sys\n"
-        "open(os.environ['FAKE_ARGS'], 'w').write(json.dumps(sys.argv[1:]))\n"
-        "print('Hello from Cursor.')\n",
+def _spend(app, engine, usd=0.0, calls=1):
+    usage = UsageTracker(app.db)
+    for _ in range(calls):
+        usage.record(engine, f"{engine}-model", "chat", cost_usd=usd)
+
+
+def test_policy_uses_the_configured_order(app):
+    policy = _policy(app, order=("gemini", "openrouter"))
+    plan = policy.chain("chat", route=policy.preference())
+    assert plan.primary == "gemini"
+    assert plan.usable == ["gemini", "openrouter"]
+
+
+def test_policy_skips_engines_without_a_key(app):
+    policy = _policy(app, configured=("gemini",))
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.primary == "gemini"
+    blocked = {item.engine: item.code for item in plan.blocked}
+    assert blocked["openrouter"] == "no_key"
+
+
+def test_policy_reports_a_request_with_no_keys_at_all(app):
+    policy = _policy(app, configured=())
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.usable == []
+    assert {item.code for item in plan.blocked} == {"no_key"}
+    # both engines are named, so the user knows what to fix
+    assert "OpenRouter" in plan.halt and "Gemini" in plan.halt
+
+
+def test_policy_capability_filter_keeps_documents_on_gemini(app):
+    policy = _policy(app, order=("openrouter", "gemini"))
+    plan = policy.chain("document", route=["gemini", "openrouter"], needs_files=True)
+    assert plan.primary == "gemini"
+    blocked = {item.engine: item.code for item in plan.blocked}
+    assert blocked["openrouter"] == "no_files"   # text-only for attachments
+
+
+def test_policy_stops_at_a_cap_and_names_it(app):
+    _spend(app, "openrouter", usd=5.0, calls=20)
+    policy = _policy(app, behaviour="stop", credits={"openrouter": {"monthly_usd": 5}})
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.usable == []
+    assert "OpenRouter" in plan.halt
+    assert "cap" in plan.halt.lower()
+    assert "$5.00" in plan.halt
+    assert "switch" in plan.halt.lower()          # tells the user how to change it
+    assert plan.switches == []
+
+
+def test_policy_switches_to_the_next_engine_at_a_cap(app):
+    _spend(app, "openrouter", usd=5.0, calls=20)
+    policy = _policy(app, behaviour="switch", credits={"openrouter": {"monthly_usd": 5}})
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.usable == ["gemini"]
+    assert plan.halt == ""
+    assert plan.switches[0].source == "openrouter"
+    assert plan.switches[0].target == "gemini"
+    assert plan.switches[0].code == "cap"
+
+
+def test_policy_stops_when_every_engine_is_capped(app):
+    _spend(app, "openrouter", usd=1.0)
+    _spend(app, "gemini", usd=1.0)
+    caps = {"openrouter": {"monthly_usd": 1}, "gemini": {"monthly_usd": 1}}
+    for behaviour in ("stop", "switch"):
+        policy = _policy(app, behaviour=behaviour, credits=caps)
+        plan = policy.chain("chat", route=["openrouter", "gemini"])
+        assert plan.usable == []
+        assert "over its cap" in plan.halt.lower() or "cap" in plan.halt.lower()
+
+
+def test_policy_counts_calls_as_well_as_money(app):
+    _spend(app, "openrouter", usd=0.0, calls=3)
+    policy = _policy(app, behaviour="stop", credits={"openrouter": {"monthly_calls": 3}})
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.usable == []
+    assert "3 of 3 calls" in plan.halt
+
+
+def test_policy_credits_mode_picks_the_engine_with_headroom(app):
+    _spend(app, "openrouter", usd=4.0, calls=10)
+    policy = _policy(
+        app,
+        policy="credits",
+        credits={"openrouter": {"monthly_usd": 5}, "gemini": {"monthly_usd": 5}},
     )
-    monkeypatch.setenv("FAKE_ARGS", str(log))
-    provider = CursorProvider(cursor_config(cli))
-    result = provider.chat([ChatMessage("user", "hi there")], system="Be brief.")
-
-    args = json.loads(log.read_text())
-    assert "--print" in args
-    assert args[args.index("--mode") + 1] == "ask"
-    assert "--force" not in args and "--yolo" not in args
-    assert "--output-format" in args and "text" in args
-    prompt = args[-1]
-    assert "System instructions" in prompt and "User: hi there" in prompt
-    assert result.text == "Hello from Cursor."
-    assert result.provider == "cursor"
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.primary == "gemini"
 
 
-def test_cursor_passes_the_optional_api_key(tmp_path, monkeypatch):
-    seen = tmp_path / "env.txt"
-    cli = _fake_cli(
-        tmp_path,
-        "import os\n"
-        "open(os.environ['FAKE_ENV'], 'w').write(os.environ.get('CURSOR_API_KEY', ''))\n"
-        "print('ok')\n",
-    )
-    monkeypatch.setenv("FAKE_ENV", str(seen))
-    provider = CursorProvider(cursor_config(cli), "cur-test-key")
-    provider.chat([ChatMessage("user", "hi")])
-    assert seen.read_text() == "cur-test-key"
+def test_policy_manual_engine_never_falls_back(app):
+    policy = _policy(app, policy="manual")
+    app.config.set("ai.pinned_engine", "gemini", save=False)
+    plan = policy.chain("chat", route=["openrouter", "gemini"])
+    assert plan.usable == ["gemini"]
 
 
-def test_cursor_auth_failure_is_explained(tmp_path):
-    cli = _fake_cli(tmp_path, "import sys\nsys.stderr.write('Not logged in. Run cursor-agent login')\nsys.exit(1)\n")
-    provider = CursorProvider(cursor_config(cli))
-    with pytest.raises(ProviderAuthError) as excinfo:
-        provider.chat([ChatMessage("user", "hi")])
-    assert "login" in str(excinfo.value).lower()
+def test_policy_describe_reports_caps_and_spend(app):
+    _spend(app, "openrouter", usd=2.5)
+    policy = _policy(app, credits={"openrouter": {"monthly_usd": 10}})
+    described = policy.describe()
+    credit = described["credits"]["openrouter"]
+    assert credit["spent_usd"] == pytest.approx(2.5)
+    assert credit["percent"] == 25.0
+    assert credit["capped"] is False
+    assert described["policy"] == "preference"
+    assert described["preference"] == ["openrouter", "gemini"]
 
 
-def test_cursor_timeout_is_reported(tmp_path):
-    cli = _fake_cli(tmp_path, "import time\ntime.sleep(10)\n")
-    provider = CursorProvider(cursor_config(cli, timeout=1))
-    with pytest.raises(ProviderTimeout):
-        provider.chat([ChatMessage("user", "hi")])
+def test_router_audits_a_cap_switch(app):
+    _spend(app, "openrouter", usd=5.0, calls=20)
+    app.config.set("ai.cap_behaviour", "switch", save=False)
+    app.config.set("ai.credits.openrouter.monthly_usd", 5, save=False)
+    gemini = FakeProvider("gemini")
+    router = _router_with(app, {"openrouter": FakeProvider("openrouter"), "gemini": gemini})
+    result = router.chat("chat", [ChatMessage("user", "hi")])
+    assert result.provider == "gemini"
+    row = app.db.query_one("SELECT * FROM audit_log WHERE action = 'ai_engine_switch'")
+    assert row is not None
+    assert "openrouter -> gemini" in row["target"]
+    assert "cap" in row["detail"].lower()
 
 
-def test_cursor_test_connection_detects_sign_in(tmp_path):
-    cli = _fake_cli(
-        tmp_path,
-        "import sys\n"
-        "if '--version' in sys.argv:\n"
-        "    print('cursor-agent 2026.10.1'); raise SystemExit(0)\n"
-        "print('Logged in as revanth'); raise SystemExit(0)\n",
-    )
-    status = CursorProvider(cursor_config(cli)).test_connection()
-    assert status.available is True
-    assert "cursor-agent 2026.10.1" in status.detail
-
-
-def test_cursor_test_connection_detects_signed_out(tmp_path):
-    cli = _fake_cli(
-        tmp_path,
-        "import sys\n"
-        "if '--version' in sys.argv:\n"
-        "    print('cursor-agent 2026.10.1'); raise SystemExit(0)\n"
-        "print('Not logged in'); raise SystemExit(1)\n",
-    )
-    status = CursorProvider(cursor_config(cli)).test_connection()
-    assert status.available is False
-    assert "not signed in" in status.detail
-
-
-def test_cursor_strips_ansi_and_parses_json_output(tmp_path):
-    cli = _fake_cli(
-        tmp_path,
-        "import json\n"
-        "print('\\x1b[32m' + json.dumps({'type': 'result', 'result': 'JSON answer'}) + '\\x1b[0m')\n",
-    )
-    provider = CursorProvider(cursor_config(cli, output_format="json"))
-    result = provider.chat([ChatMessage("user", "hi")])
-    assert result.text == "JSON answer"
-
-
-def test_cursor_describe_marks_cli_presence(tmp_path):
-    cli = _fake_cli(tmp_path, "print('ok')\n")
-    described = CursorProvider(cursor_config(cli)).describe()
-    assert described["name"] == "cursor"
-    assert described["configured"] is True
-    assert described["supports_tools"] is False
-    assert described["binary"] == cli
+def test_router_refuses_to_spend_when_stopped_at_a_cap(app):
+    _spend(app, "openrouter", usd=5.0, calls=20)
+    app.config.set("ai.cap_behaviour", "stop", save=False)
+    app.config.set("ai.credits.openrouter.monthly_usd", 5, save=False)
+    gemini = FakeProvider("gemini")
+    router = _router_with(app, {"openrouter": FakeProvider("openrouter"), "gemini": gemini})
+    with pytest.raises(ProviderUnavailable) as excinfo:
+        router.chat("chat", [ChatMessage("user", "hi")])
+    assert "cap" in str(excinfo.value).lower()
+    assert gemini.calls == 0

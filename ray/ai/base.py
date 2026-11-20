@@ -94,6 +94,10 @@ class ChatResult:
     cached: bool = False
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    # Money actually spent on this request, when the provider reports it, plus
+    # whether it was reported (True) or estimated locally (False).
+    cost_usd: float = 0.0
+    cost_reported: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +108,8 @@ class ChatResult:
             "output_tokens": self.output_tokens,
             "latency_ms": self.latency_ms,
             "cached": self.cached,
+            "cost_usd": round(float(self.cost_usd or 0.0), 6),
+            "cost_reported": bool(self.cost_reported),
             "tool_calls": [
                 {"id": c.id, "name": c.name, "arguments": c.arguments, "raw": c.raw}
                 for c in self.tool_calls

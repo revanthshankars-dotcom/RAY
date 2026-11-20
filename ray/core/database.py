@@ -26,7 +26,7 @@ from ..core.logging_setup import get_logger
 
 log = get_logger("core.database")
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_STATEMENTS: list[str] = [
     # ---------------------------------------------------------- productivity
@@ -233,7 +233,8 @@ SCHEMA_STATEMENTS: list[str] = [
         characters INTEGER DEFAULT 0,
         ok INTEGER DEFAULT 1,
         error TEXT DEFAULT '',
-        cached INTEGER DEFAULT 0
+        cached INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0
     )""",
     "CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts)",
     """CREATE TABLE IF NOT EXISTS cache (
@@ -373,6 +374,10 @@ class Database:
                 self._add_column(conn, "tasks", "recurrence", "TEXT")
             if from_version < 3:
                 self._add_column(conn, "workflows", "permission_level", "INTEGER DEFAULT 1")
+            if from_version < 4:
+                # Real (or locally estimated) spend per call, so the credit caps
+                # in ray/ai/policy.py are measured rather than guessed.
+                self._add_column(conn, "usage", "cost_usd", "REAL DEFAULT 0")
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     @staticmethod

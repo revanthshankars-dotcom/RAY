@@ -25,7 +25,7 @@ tests; the Security Center scan went from 9 to 13 verifiable checks.
 | Egress | grep every `http` literal in `ray/` | provider bases, DuckDuckGo, localhost only |
 | Path handling | read every `resolve`, `open`, `read_text`, `write` caller | 1 sibling-prefix escape (F-04) |
 | Network | read the whole HTTP handler, then live `curl` probes | 4 gaps (F-05, F-06) |
-| Subprocess | read `shell.py`, `apps.py`, `ai/cursor.py` | 2 gaps (F-03, F-11) |
+| Subprocess | read `shell.py`, `apps.py` (the Cursor CLI adapter was removed) | 2 gaps (F-03, F-11) |
 | Parsers | read `knowledge/extract.py`, `computer/files.py` | no zip extraction (good), 2 DoS gaps (F-08) |
 | Data at rest | `stat` the live `.runtime` folder | world-readable data dir (F-07) |
 | Runtime | `POST /api/security/scan`, jsdom UI walk | 9/9 checks, UI escapes all API strings |
@@ -55,7 +55,9 @@ and details to 2 000 characters.
    a private key to Cursor/Gemini. → Clause 5.
 2. **Spawned CLI inherits every key.** `CursorProvider` passed `dict(os.environ)`
    to a third-party binary, including Gemini, Fish, xAI keys and the API token.
-   → Clause 4.
+   → Clause 4. *(Superseded: the Cursor CLI provider was removed when OpenRouter
+   replaced it. RAY no longer spawns any third-party process, so there is no
+   environment to scrub.)*
 3. **Unencrypted backups of credential stores.** `create_backup` zipped whatever
    it was pointed at; pointing it at `~` produced a plaintext zip of `.ssh` and
    `.aws`. → Clause 6.
@@ -83,7 +85,7 @@ still not fabricated anywhere.
 | F-07 | `paths.py`, `database.py`, `config.py` | Medium | Fixed | Data dir `0755`, DB `0644`, config `0644` on POSIX |
 | F-08 | `ray/knowledge/extract.py` | Medium | Fixed | OOXML zip bombs and XML entity expansion were unbounded |
 | F-09 | `ray/computer/files.py` | Medium | Fixed | Backups could include `.env`, `.ssh`, browser profiles |
-| F-10 | `ray/ai/cursor.py` | Medium | Fixed | Third-party CLI inherited all provider keys |
+| F-10 | `ray/ai/cursor.py` (now deleted) | Medium | Fixed, then removed | Third-party CLI inherited all provider keys; OpenRouter replaced the CLI |
 | F-11 | `ray/security/secrets.py` | Low | Fixed | Blob regex flagged hashes and long snake_case file names |
 | F-12 | `ray/computer/files.py` | Info | Verified | No archive extraction exists, so zip-slip has no entry point |
 | F-13 | `ray/ui/app.js` | Info | Verified | CSP + `esc()` discipline holds; no `eval`/inline script |
@@ -191,11 +193,14 @@ and `.env` files, next to the source folder — a common place for cloud sync.
 them in `skipped_sensitive`, refuses a single-file backup of a credential store,
 and refuses to write the archive into a protected root.
 
-### F-10 — CLI environment (Medium)
+### F-10 — CLI environment (Medium) — resolved by removal
 
-*Fixed by* `CursorProvider._env()`: `ENV_SCRUBBED` removes Gemini/Fish/xAI keys,
-`RAY_CURSOR_API_KEY` and `RAY_API_TOKEN` before spawning `cursor-agent`, then
-sets only `CURSOR_API_KEY` when the vault has one.
+*Fixed by* `CursorProvider._env()`: `ENV_SCRUBBED` removed Gemini/Fish/xAI keys,
+`RAY_CURSOR_API_KEY` and `RAY_API_TOKEN` before spawning `cursor-agent`, then set
+only `CURSOR_API_KEY` when the vault had one. The provider (and the CLI it drove)
+was removed in favour of OpenRouter, which is a plain HTTPS client: no child
+process exists, so no credential can be inherited. See `SECURITY.md` Clause 4 and
+Clause 11a (engine selection and credit caps).
 
 ### F-11 — Secret detection noise (Low)
 
@@ -222,7 +227,7 @@ scan exposes it; "Accepted" means it is out of scope and stated as such.
 | 5 | Malicious note title `<img onerror=…>` steals the session | **Blocked** — Clause 19 |
 | 6 | Another local account drives `/api/command` to delete files | **Blocked** with a token; otherwise **Detected** by audit + scan warning — Clause 2 |
 | 7 | Malicious web page POSTs to `127.0.0.1:8765` while you browse | **Blocked** — JSON-only + origin guard — Clause 1 |
-| 8 | Rogue Cursor CLI build reads `GEMINI_API_KEY` from its environment | **Blocked** — Clause 4 |
+| 8 | Rogue third-party CLI reads `GEMINI_API_KEY` from its environment | **Blocked by design** — RAY spawns no AI subprocess; Clause 4 |
 | 9 | "Back up my home folder" → plaintext zip of keys lands in OneDrive | **Blocked** — Clause 6 |
 | 10 | Automation loop that tries to escalate by running a delete tool each tick | **Blocked** — Clause 14 |
 | 11 | Compromised PyPI release of `httpx`/`pypdf` on the next `pip install` | **Accepted** (lower bounds only) — Clause 18 advises hash-pinned installs |
@@ -301,6 +306,6 @@ Expected scan (loopback, no token): **13/13**, zero problems. Expected with
 Files changed for this audit: `ray/browser/search.py`, `ray/computer/files.py`,
 `ray/computer/shell.py`, `ray/knowledge/extract.py`, `ray/core/paths.py`,
 `ray/core/database.py`, `ray/core/config.py`, `ray/security/secrets.py`,
-`ray/ai/cursor.py`, `ray/server/app.py`, `ray/ui/app.js`, `ray/app.py`,
+`ray/ai/openrouter.py`, `ray/ai/policy.py`, `ray/server/app.py`, `ray/ui/app.js`, `ray/app.py`,
 `tests/conftest.py`, `tests/test_api.py`, `tests/test_hardening.py` (new),
 `SECURITY.md` (new), `SECURITY_AUDIT.md` (new).

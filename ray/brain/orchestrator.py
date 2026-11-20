@@ -71,6 +71,7 @@ class TaskResult:
     plan: dict[str, Any] = field(default_factory=dict)
     outcomes: list[dict[str, Any]] = field(default_factory=list)
     answer: str = ""
+    engine: str = ""  # which AI engine answered ("" when the answer was local)
     speak: str = ""
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
@@ -89,6 +90,7 @@ class TaskResult:
             "plan": self.plan,
             "outcomes": self.outcomes,
             "answer": self.answer,
+            "engine": self.engine,
             "speak": self.speak,
             "duration_ms": self.duration_ms,
             "error": self.error,
@@ -117,6 +119,7 @@ class Orchestrator:
         self.config = config
         self.agents = agents or AgentRegistry()
         self._tasks: dict[str, dict[str, Any]] = {}
+        self._last_engine = ""
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ public
@@ -127,6 +130,7 @@ class Orchestrator:
         history: list[dict[str, str]] | None = None,
         approval_id: int | None = None,
         resume_task_id: str | None = None,
+        engine: str | None = None,
     ) -> TaskResult:
         text = (text or "").strip()
         if resume_task_id:
@@ -139,11 +143,11 @@ class Orchestrator:
 
         plan: Plan | None = None
         try:
-            plan = self.planner.plan(text, agent=agent, history=history)
+            plan = self.planner.plan(text, agent=agent, history=history, engine=engine)
             spec = self.agents.select(text, suggested=plan.agent)
             result = TaskResult(
                 task_id=task_id, text=text, status="running", agent=spec.name,
-                plan=plan.as_dict(),
+                plan=plan.as_dict(), engine=plan.engine,
             )
             self.bus.publish("task_started", task_id=task_id, text=text, agent=spec.name, steps=len(plan.steps))
 
@@ -155,7 +159,10 @@ class Orchestrator:
                     # configured).  A conversational provider can still answer,
                     # so try it before falling back to the offline notice.
                     try:
-                        reply = self._chat_result(text, history=history, agent=spec.name)
+                        reply = self._chat_result(
+                            text, history=history, agent=spec.name, engine=engine
+                        )
+                        result.engine = self._last_engine
                         result.answer = reply + (
                             "\n\nNote: I answered without tools. Tool actions (files, apps, "
                             "automation) need a tool-capable model - Gemini with a key is the "
@@ -310,9 +317,15 @@ class Orchestrator:
         self.bus.publish("task_cancelled", task_id=task_id)
         return True
 
-    def chat(self, text: str, history: list[dict[str, str]] | None = None, agent: str = "assistant") -> str:
+    def chat(
+        self,
+        text: str,
+        history: list[dict[str, str]] | None = None,
+        agent: str = "assistant",
+        engine: str | None = None,
+    ) -> str:
         try:
-            return self._chat_result(text, history=history, agent=agent)
+            return self._chat_result(text, history=history, agent=agent, engine=engine)
         except ProviderError as exc:
             return (
                 f"I could not reach an AI provider: {exc.message}\n\n"
@@ -321,7 +334,11 @@ class Orchestrator:
             )
 
     def _chat_result(
-        self, text: str, history: list[dict[str, str]] | None = None, agent: str = "assistant"
+        self,
+        text: str,
+        history: list[dict[str, str]] | None = None,
+        agent: str = "assistant",
+        engine: str | None = None,
     ) -> str:
         spec = self.agents.get(agent)
         context = ""
@@ -342,7 +359,10 @@ class Orchestrator:
             if item.get("role") in ("user", "assistant")
         ]
         messages.append(ChatMessage("user", text))
-        result = self.router.chat("chat", messages, system=system, temperature=0.6, max_tokens=900)
+        result = self.router.chat(
+            "chat", messages, system=system, temperature=0.6, max_tokens=900, provider=engine or None
+        )
+        self._last_engine = str(getattr(result, "provider", "") or "")
         return result.text or "(the model returned an empty reply)"
 
     # -------------------------------------------------------------- internals

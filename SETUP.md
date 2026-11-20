@@ -63,37 +63,35 @@ hardware, and the folders are the container's, not yours.
 
    The UI reads the token from the page it is served, so you do not type it.
 
-### B.1 Walkthrough, with all four providers
+### B.1 Walkthrough, from zero to a working RAY
 
-1. **Get the current code.** If PR #1 is merged, create the Codespace on
-   **`main`**. If it is not merged yet, create it on the branch
-   `arena/84eddd81-ray` (Code ▾ → Codespaces → … → *New with options* → branch).
+1. **Get the current code.** OpenRouter replaced the Cursor CLI and Grok in
+   PR #2. If that PR is merged, create the Codespace on **`main`**. If it is
+   still open, create it on the branch `arena/4d1e2c55-ray`
+   (Code ▾ → Codespaces → … → *New with options* → branch) — everything below
+   is identical either way.
 2. **Create the codespace.** Repository → **Code ▾ → Codespaces → Create
    codespace**. The included `.devcontainer` installs Python 3.11 and the four
    dependencies; wait for "Configuration complete".
-3. **Add the four keys as Codespaces secrets** (they survive rebuilds and are
+3. **Add three keys as Codespaces secrets** (they survive rebuilds and are
    never written into the repo): GitHub avatar → **Settings → Codespaces →
    New secret**. For each one set *Repository access* to
    `revanthshankars-dotcom/RAY`.
 
    | Secret name | Value from | Needed for |
    |---|---|---|
-   | `RAY_GEMINI_API_KEY` | <https://aistudio.google.com/apikey> | multi-step planning, documents, fallback chat — **the important one** |
+   | `RAY_OPENROUTER_API_KEY` | <https://openrouter.ai/keys> | chat, reasoning, code and planning — **the important one** (one key reaches Gemini, Claude, GPT…) |
+   | `RAY_GEMINI_API_KEY` | <https://aistudio.google.com/apikey> | documents, images and the second engine in the default order |
    | `RAY_FISH_API_KEY` | <https://fish.audio> → API keys | spoken replies |
-   | `RAY_CURSOR_API_KEY` | cursor.com dashboard → API keys | chat/reasoning without a CLI login (optional — `cursor-agent login` also works) |
-   | `RAY_GROK_API_KEY` | <https://console.x.ai> | optional legacy path; skip unless you want it |
    | `RAY_API_TOKEN` | any 32+ random characters (`python3 -c "import secrets;print(secrets.token_urlsafe(32))"`) | protects the forwarded web endpoint — not a provider key |
 
 4. **Restart the codespace** (Command Palette → *Codespaces: Rebuild Container*,
    or stop/start) so the secrets become environment variables.
-5. **Optional: install the Cursor CLI** if you want Cursor as the chat engine
-   without an API key:
-
-   ```bash
-   curl https://cursor.com/install -fsS | bash
-   export PATH="$HOME/.local/bin:$PATH"
-   cursor-agent login        # prints a URL; finish the login in your browser
-   ```
+5. **Optional: pick a model slug.** The default
+   `google/gemini-2.5-flash` works on the free OpenRouter tier; swap it in
+   **Settings → AI providers → Models** (or set
+   `ai.providers.openrouter.model` in `config.json`). The catalogue is at
+   <https://openrouter.ai/models>.
 
 6. **Start RAY** in the codespace terminal:
 
@@ -103,19 +101,20 @@ hardware, and the folders are the container's, not yours.
 
 7. **Open the interface.** *Ports* tab → `8765` → globe icon. Keep visibility
    **private**; the token is only extra protection for shared links.
-8. **Confirm the providers.** In the app: **Settings → AI providers** — Gemini,
-   Fish and Cursor should show *configured* (from the environment). Press
-   **Test** on each. Don't paste a key in the UI if the secret already exists;
+8. **Confirm the providers.** In the app: **Settings → AI providers** —
+   OpenRouter, Gemini and Fish should show *configured* (from the environment).
+   Press **Test** on each. Don't paste a key in the UI if the secret already exists;
    the UI value would just duplicate it.
 9. **Prove it works.** Try `"how much ram am i using"` (local, no key needed),
    then a multi-step request such as `"find my five largest files and make a
-   note with their paths"` — that one needs Gemini.
+   note with their paths"` — that one needs an engine that can call tools,
+   which is OpenRouter or Gemini.
 
 Checks in the codespace terminal:
 
 ```bash
 python main.py --check     # python, packages, data home, which providers are configured
-python -m pytest -q        # 252 tests, offline
+python -m pytest -q        # 266 tests, offline
 ```
 
 **What a Linux codespace can and cannot do.** It can plan, chat, research, read
@@ -203,33 +202,54 @@ providers. There are exactly two ways to supply them.
 
 | Provider | What it powers | Where the key comes from | Needs |
 |---|---|---|---|
-| **Cursor** (primary chat/reasoning) | answers, code, reasoning | `cursor-agent login` (no key needed) or an API key from cursor.com | the `cursor-agent` CLI installed |
-| **Gemini** | tool planning, long documents, PDFs, fallback chat | <https://aistudio.google.com/apikey> | free tier is enough |
+| **OpenRouter** (default chat/reasoning) | answers, code, reasoning, multi-step planning | <https://openrouter.ai/keys> | free tier is enough to start |
+| **Gemini** | documents, PDFs, images, second opinion, planning fallback | <https://aistudio.google.com/apikey> | free tier is enough |
 | **Fish Audio** | spoken replies | <https://fish.audio> → API keys | optional |
-| **Grok** (xAI, off by default) | legacy reasoning path | <https://console.x.ai> | optional |
 
-Cursor CLI:
+OpenRouter is one key in front of many models. The default slug,
+`google/gemini-2.5-flash`, supports native function calling, which is what lets
+the planner drive RAY's tools — the same job Gemini's own endpoint does. Change
+the slug (Claude, GPT, Qwen, anything at <https://openrouter.ai/models>) in
+**Settings → AI providers → Models**; no code change.
 
-```powershell
-irm 'https://cursor.com/install?win32=true' | iex ; cursor-agent login   # Windows
-```
-```bash
-curl https://cursor.com/install -fsS | bash ; cursor-agent login        # Linux/macOS
-```
+Without a key, plain-English single commands and local questions still work;
+multi-step jobs answer with "add a key" instead of pretending.
 
-Gemini is the one that unlocks multi-step commands, because the Cursor CLI
-cannot call RAY's tools. Without it, plain-English single commands and local
-questions still work; multi-step jobs answer with "add a key" instead of
-pretending.
+### Option 1b — set credit caps (recommended if the key is not yours)
+
+In **Settings → AI providers → Engines**, each engine has `USD / month` and
+`calls / month` fields (`0` = no cap) and one choice for what happens when a cap
+is reached:
+
+| Setting | What it does |
+|---|---|
+| `stop` (default) | refuses the request and tells you which engine and which cap was hit |
+| `switch` | moves to the next engine that still has credit, and logs the switch |
+
+The **Policy** select decides how the order is applied:
+
+| Policy | Behaviour |
+|---|---|
+| `Preference — follow my order` (default) | try the engines in the order you dragged them |
+| `Credits — most credit left first` | re-sort by remaining monthly credit before each request; your order breaks ties |
+| `Manual — only the pinned engine` | only the engine you pin answers, with no automatic fallback |
+
+The pill under the select shows what RAY would try *right now*, straight from the
+server's own decision — not a re-implementation in the interface.
+
+Example: OpenRouter `$5 / month`, 500 calls; Gemini `$0 / month`, 300 calls.
+Then drag `Gemini` above `OpenRouter` if you would rather spend Google's free
+tier first. Spend is counted locally from the amounts the providers report, so
+the cap holds even if a provider never warns you, and every switch appears in
+**Security → audit log** as `ai_engine_switch`.
 
 ### Option 2 — environment variables (cloud, VPS, CI, Codespaces)
 
 | Variable | Alias accepted | Provider |
 |---|---|---|
-| `RAY_CURSOR_API_KEY` | `CURSOR_API_KEY` | Cursor API key (optional; login also works) |
+| `RAY_OPENROUTER_API_KEY` | `OPENROUTER_API_KEY` | OpenRouter (one key, many models) |
 | `RAY_GEMINI_API_KEY` | `GEMINI_API_KEY`, `GOOGLE_API_KEY` | Gemini |
 | `RAY_FISH_API_KEY` | `FISH_API_KEY`, `FISH_AUDIO_API_KEY` | Fish Audio |
-| `RAY_GROK_API_KEY` | `XAI_API_KEY`, `GROK_API_KEY` | Grok / xAI |
 | `RAY_API_TOKEN` | — | not a provider: protects the local API itself |
 
 Rules that matter:
@@ -267,7 +287,7 @@ Rules that matter:
 | "help", "what can you do" | the live capability list |
 
 Anything longer ("compare three laptops and draft an email") needs a provider —
-that is what Gemini/Cursor are for. RAY says so instead of guessing.
+that is what OpenRouter and Gemini are for. RAY says so instead of guessing.
 
 ---
 
@@ -287,9 +307,10 @@ that is what Gemini/Cursor are for. RAY says so instead of guessing.
 
 | Symptom | Fix |
 |---|---|
+| `ModuleNotFoundError: No module named 'httpx'` (or psutil/cryptography/pypdf) | the dependencies were never installed in the interpreter you are running. Run `python3 -m pip install -r requirements.txt`. In a Codespace the devcontainer normally does this itself — if it did not, rebuild the container, or just run that command in the terminal. `python3 main.py` now prints this instruction instead of a traceback. |
 | `address already in use` | `python main.py --port 8766`, or stop the other instance |
 | "I can't reach an AI provider" | no key configured: Settings → AI providers, or set `RAY_GEMINI_API_KEY` |
-| Chat works, multi-step commands don't | the planner needs Gemini (Cursor CLI cannot call tools) |
+| Chat works, multi-step commands don't | the planner needs an engine that can call tools — check **Settings → AI providers → Engines** |
 | Page loads but every call returns 401 | `RAY_API_TOKEN` is set; the UI carries it automatically — scripts must send `X-RAY-Token` |
 | Works locally, not through Codespaces/proxy | start with `--host 0.0.0.0` **and** `RAY_ALLOW_REMOTE_ORIGIN=1` |
 | Volume/brightness "not supported on this platform" | Linux container without those APIs — expected; works on Windows |
