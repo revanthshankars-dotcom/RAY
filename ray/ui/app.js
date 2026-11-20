@@ -1620,9 +1620,12 @@ VIEWS.voice = async function () {
               <span class="mono" id="live-timer" style="font-size:22px;letter-spacing:-0.02em">0:00</span>
             </div>
             <div class="progress" style="margin-top:8px"><i style="width:${usage.percent || 0}%"></i></div>
-            <div class="small ${overCap ? 'warn' : 'faint'}" id="live-usage" style="margin-top:6px">
-              ${fmtUsageMinutes(usage)} of ${usage.cap_minutes || 0} min used · ${usage.calls || 0} call${usage.calls === 1 ? '' : 's'}
-              ${overCap ? ' · over budget, calls still allowed' : ''}
+            <div class="row" style="justify-content:space-between;align-items:baseline;margin-top:6px;gap:10px">
+              <span class="small ${overCap ? 'warn' : 'faint'}" id="live-usage">
+                ${fmtUsageMinutes(usage)} of ${usage.cap_minutes || 0} min used · ${usage.calls || 0} call${usage.calls === 1 ? '' : 's'}
+                ${overCap ? ' · over budget, calls still allowed' : ''}
+              </span>
+              <button class="linkish" id="reset-live-usage" title="Zero this month's counter; the cleared total is written to the audit log">Reset count</button>
             </div>
             <div class="banner small" ${overCap ? '' : 'hidden'} id="live-warn">
               You are ${fmtMinutes(Math.max(0, (usage.minutes_used || 0) - (usage.cap_minutes || 0)))} over the budget you set.
@@ -1734,6 +1737,49 @@ VIEWS.voice = async function () {
   if (live) bindLiveCall(live);
 };
 
+/* ------------------------------------------------------- the live-call clock
+   A call can outlive the panel: a re-render, a reload or a closed tab must not
+   lose minutes, because those minutes are billed whether RAY noticed or not.
+   One module-level record holds the truth; the panel only renders it. */
+const liveCall = { startedAt: 0, recorded: true, timer: null, watching: false, onRecorded: null };
+
+function endLiveCallClock() {
+  if (liveCall.timer) { clearInterval(liveCall.timer); liveCall.timer = null; }
+}
+
+function recordLiveCall(options = {}) {
+  if (!liveCall.startedAt || liveCall.recorded) return Promise.resolve(null);
+  liveCall.recorded = true;
+  endLiveCallClock();
+  const seconds = Math.round((Date.now() - liveCall.startedAt) / 1000);
+  liveCall.startedAt = 0;
+  if (seconds < 1) return Promise.resolve(null);
+  const payload = { seconds, note: 'live agent call' };
+  if (options.beacon) {
+    // the page is going away: this must not wait on a promise
+    const body = JSON.stringify(payload);
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/voice/agent/session', new Blob([body], { type: 'application/json' }));
+    } else {
+      fetch('/api/voice/agent/session', {
+        method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body,
+      }).catch(() => {});
+    }
+    return Promise.resolve(null);
+  }
+  return api('/api/voice/agent/session', { method: 'POST', body: payload })
+    .then((next) => { if (liveCall.onRecorded) liveCall.onRecorded(next, seconds, null); return next; })
+    .catch((error) => { if (liveCall.onRecorded) liveCall.onRecorded(null, seconds, error); return null; });
+}
+
+function watchLiveCallExit() {
+  if (liveCall.watching) return;
+  liveCall.watching = true;
+  // pagehide covers reload, closing the tab and leaving the app. Not
+  // visibilitychange: backgrounding a tab does not end a call.
+  window.addEventListener('pagehide', () => recordLiveCall({ beacon: true }));
+}
+
 /** Mount the Fish <fish-agent> element and keep honest time on it. */
 function bindLiveCall(initial) {
   const holder = $('#live-stage');
@@ -1745,9 +1791,7 @@ function bindLiveCall(initial) {
   const startBtn = $('#start-live');
   const endBtn = $('#end-live');
   let usage = initial.usage || {};
-  let startedAt = 0;
-  let ticking = null;
-  let recorded = false;
+  watchLiveCallExit();
 
   const paintUsage = (next) => {
     if (!next) return;
@@ -1770,29 +1814,19 @@ function bindLiveCall(initial) {
   };
 
   const tick = () => {
-    if (timerNode) timerNode.textContent = fmtClock((Date.now() - startedAt) / 1000);
+    if (timerNode) timerNode.textContent = fmtClock((Date.now() - liveCall.startedAt) / 1000);
   };
 
-  /** Write the finished call to RAY's local ledger (never blocks, never retries loudly). */
-  const record = async () => {
-    if (!startedAt || recorded) return;
-    recorded = true;
-    const seconds = Math.round((Date.now() - startedAt) / 1000);
-    startedAt = 0;
-    if (ticking) { clearInterval(ticking); ticking = null; }
-    try {
-      const next = await api('/api/voice/agent/session', {
-        method: 'POST', body: { seconds, note: 'live agent call' },
-      });
-      paintUsage(next);
-      if (next.over_cap) {
-        toast('Over your voice budget', `${fmtUsageMinutes(next)} of ${next.cap_minutes} min this month. `
-          + 'Calls are still allowed - Fish bills the minutes.', 'warn', 8000);
-      }
-    } catch (error) {
-      toast('Call not recorded', error.message, 'error');
-    }
+  // the panel repaints whenever a call is written, even if another view is open
+  liveCall.onRecorded = (next, seconds, error) => {
     if (timerNode) timerNode.textContent = fmtClock(seconds);
+    if (error) { toast('Call not recorded', error.message, 'error'); return; }
+    if (!next) return;
+    paintUsage(next);
+    if (next.over_cap) {
+      toast('Over your voice budget', `${fmtUsageMinutes(next)} of ${next.cap_minutes} min this month. `
+        + 'Calls are still allowed - Fish bills the minutes.', 'warn', 8000);
+    }
   };
 
   const endCall = () => {
@@ -1800,7 +1834,7 @@ function bindLiveCall(initial) {
     if (endBtn) endBtn.hidden = true;
     if (startBtn) startBtn.disabled = !(initial.enabled && initial.configured);
     if (statusNode) statusNode.textContent = 'Call ended.';
-    record();
+    recordLiveCall();
   };
 
   const loadScript = () => new Promise((resolve, reject) => {
@@ -1837,7 +1871,8 @@ function bindLiveCall(initial) {
         toast('Could not load the widget', error.message, 'error');
         return;
       }
-      recorded = false;
+      liveCall.recorded = true;
+      liveCall.startedAt = 0;
       holder.innerHTML = `<fish-agent agent-id="${esc(initial.agent_id)}"
         consent="1" consent-text="RAY will connect you to your Fish Audio agent. Audio leaves this browser."
         transcript="1" mic-muting="1"></fish-agent>`;
@@ -1846,9 +1881,11 @@ function bindLiveCall(initial) {
       const element = holder.querySelector('fish-agent');
       // the widget dispatches these itself; we never guess the call state
       element.addEventListener('fish-agent:call', () => {
-        startedAt = Date.now();
-        recorded = false;
-        ticking = setInterval(tick, 1000);
+        liveCall.startedAt = Date.now();
+        liveCall.recorded = false;
+        endLiveCallClock();
+        liveCall.timer = setInterval(tick, 1000);
+        if (timerNode) timerNode.textContent = '0:00';
         if (statusNode) statusNode.textContent = 'Live. Speak normally; end the call when you are done.';
       });
       element.addEventListener('fish-agent:connect', () => {
@@ -1857,7 +1894,7 @@ function bindLiveCall(initial) {
       element.addEventListener('fish-agent:disconnect', () => {
         if (statusNode) statusNode.textContent = 'Call ended.';
         if (endBtn) endBtn.hidden = true;
-        record();
+        recordLiveCall();
       });
       element.addEventListener('fish-agent:error', (event) => {
         const code = event?.detail?.code || 'connection_failed';
@@ -1868,7 +1905,7 @@ function bindLiveCall(initial) {
             : 'The call could not connect. Check your network and the agent id.';
         if (statusNode) statusNode.textContent = hint;
         startBtn.disabled = false;
-        record();
+        recordLiveCall();
       });
     });
   }
@@ -1894,6 +1931,25 @@ function bindLiveCall(initial) {
         if (startBtn) startBtn.disabled = !(next.enabled && next.configured);
         toast('Saved', next.enabled ? 'Live calls are on.' : 'Live calls are off.', 'ok');
       } catch (error) { toast('Could not save', error.message, 'error', 7000); }
+    });
+  }
+
+  const resetBtn = $('#reset-live-usage');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      resetBtn.disabled = true;
+      try {
+        const next = await api('/api/voice/agent/usage/reset', { method: 'POST', body: {} });
+        paintUsage(next);
+        if (timerNode) timerNode.textContent = '0:00';
+        toast('Counter reset', next.cleared_calls
+          ? `${next.cleared_calls} call${next.cleared_calls === 1 ? '' : 's'} / ${fmtMinutes(next.cleared_seconds / 60)} cleared. `
+            + 'The total is in Security → audit as voice_agent_usage_reset.'
+          : 'Nothing to clear this month.', 'ok', 7000);
+      } catch (error) {
+        toast('Could not reset', error.message, 'error');
+      }
+      resetBtn.disabled = false;
     });
   }
 

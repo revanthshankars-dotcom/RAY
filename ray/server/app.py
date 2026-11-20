@@ -1328,6 +1328,14 @@ def voice_agent_session(app, body=None, **_: Any) -> Any:
     return usage
 
 
+@route("POST", "/api/voice/agent/usage/reset")
+def voice_agent_reset(app, **_: Any) -> Any:
+    """Zero this month's minute counter, leaving an audit row behind."""
+    usage = app.voice_agent.reset_month()
+    app.bus.publish("voice_agent_usage_reset", cleared_calls=usage["cleared_calls"])
+    return usage
+
+
 @route("POST", "/api/voice/transcribe")
 def voice_transcribe(app, body=None, **_: Any) -> Any:
     """Transcribe audio with a local Whisper install when one exists.

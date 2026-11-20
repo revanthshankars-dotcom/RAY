@@ -137,7 +137,8 @@ try {
   const card = window.document.querySelector('#live-card');
   const scriptLoaded = Boolean(window.document.querySelector('script[data-ray-fish-agent]'));
   const usage = (window.document.querySelector('#live-usage')?.textContent || '').replace(/\s+/g, ' ').trim();
-  const hasFields = Boolean(window.document.querySelector('#live-agent-id'));
+  const hasFields = Boolean(window.document.querySelector('#live-agent-id'))
+    && Boolean(window.document.querySelector('#reset-live-usage'));
   const ok = Boolean(card) && hasFields && !scriptLoaded && /min used . \d+ call/.test(usage);
   console.log(ok ? `ok   live voice panel (${usage})` : `FAIL live voice panel (card=${Boolean(card)} fields=${hasFields} script=${scriptLoaded} usage="${usage}")`);
   if (!ok) failures += 1;
