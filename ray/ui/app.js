@@ -41,14 +41,28 @@ const ICONS = {
   downloads: 'M12 4v10m0 0 4-4m-4 4-4-4M5 19h14',
   developer: 'M9 8l-4 4 4 4M15 8l4 4-4 4',
   settings: 'M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14.2 3h-4l-.4 2.5a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2l.4 2.5h4l.4-2.5a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z',
+  calculator: 'M6 3.5h12v17H6zM9 7h6M8.5 10.5h1M12 10.5h1M15.5 10.5h1M8.5 14h1M12 14h1M15.5 14h1M8.5 17.5h1M12 17.5h1M15.5 17.5h1',
+  notepad: 'M7 3.5h8l4 4v13H7zM15 3.5v4.5h4M10 12h6M10 15.5h4',
+  screenshot: 'M3.5 7.5h4l1.5-2h6l1.5 2h4v11h-17zM12 15.4a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
+  command: 'M12 3.2l1.9 5.4 5.4 1.9-5.4 1.9L12 17.8l-1.9-5.4L4.7 10.5l5.4-1.9z',
+  cpu: 'M7 7h10v10H7zM9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3',
+  memory: 'M5 6.5h14v11H5zM8.5 10h7M8.5 13.5h4M9 3.5v3M15 3.5v3M9 17.5v3M15 17.5v3',
+  disk: 'M4.5 6.5h15v5h-15zM4.5 12.5h15v5h-15zM7 9h.01M7 15h.01',
+  network: 'M12 20V9M7.5 12.5a6.5 6.5 0 0 1 9 0M4 9a11 11 0 0 1 16 0',
+  battery: 'M3.5 8h15v8h-15zM20 10.5v3M6 10.5v3',
+  folder: 'M3.5 7.5h6l2 2h9v9h-17z',
+  search: 'M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM20 20l-4.4-4.4',
+  plus: 'M12 5v14M5 12h14',
+  external: 'M14 4h6v6M20 4l-8.5 8.5M18 14v6H4V6h6',
 };
 
 const NAV = [
   { group: 'Workspace' },
   { id: 'home', label: 'Home' },
+  { id: 'search', label: 'Search' },
   { id: 'assistant', label: 'AI Assistant' },
   { id: 'voice', label: 'Voice Assistant' },
-  { id: 'computer', label: 'Computer Control' },
+  { id: 'computer', label: 'System Control' },
   { id: 'files', label: 'Files' },
   { id: 'browser', label: 'Browser' },
   { group: 'Productivity' },
@@ -202,11 +216,48 @@ function renderNav() {
   }).join('');
 }
 
+const DOCK = [
+  { id: 'home', icon: 'home', label: 'Home' },
+  { id: 'assistant', icon: 'assistant', label: 'Assistant' },
+  { id: 'files', icon: 'files', label: 'Files' },
+  { id: 'media', icon: 'media', label: 'Media' },
+  { id: 'security', icon: 'security', label: 'Security' },
+  { id: 'settings', icon: 'settings', label: 'Settings' },
+];
+
+function renderDock() {
+  const dock = $('#dock');
+  if (!dock) return;
+  dock.innerHTML = DOCK.map((item) => `
+    <button class="dock-item ${state.section === item.id ? 'active' : ''}" data-act="go"
+      data-section="${item.id}" title="${esc(item.label)}" aria-label="${esc(item.label)}">${icon(item.icon, 19)}</button>`).join('')
+    + '<span class="dock-sep"></span>'
+    + `<button class="dock-item" data-act="palette" title="Command center (Ctrl+Space)" aria-label="Command center">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>`;
+}
+
+function startClock() {
+  const tick = () => {
+    const now = new Date();
+    const clock = $('#topbar-time');
+    if (clock) clock.textContent = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const date = $('#topbar-date');
+    if (date) date.textContent = now.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+    const hero = $('#hero-time');
+    if (hero) hero.textContent = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  };
+  tick();
+  setInterval(tick, 10000);
+}
+
 function go(section) {
+  if (section === 'search') { openPalette(); return; }
   if (!section) section = 'home';
   state.section = section;
   if (location.hash !== `#/${section}`) history.replaceState(null, '', `#/${section}`);
   renderNav();
+  renderDock();
   Object.values(state.timers).forEach((id) => clearInterval(id));
   state.timers = {};
   const renderer = VIEWS[section] || VIEWS.home;
@@ -464,12 +515,13 @@ function lineChart(canvas, series, options = {}) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, width, height);
-  const pad = { l: 30, r: 8, t: 10, b: 18 };
+  const spark = Boolean(options.spark);
+  const pad = spark ? { l: 0, r: 0, t: 3, b: 3 } : { l: 30, r: 8, t: 10, b: 18 };
   const colors = options.colors || ['#2fd6e8', '#9d8cff'];
-  const max = Math.max(10, ...series.flatMap((s) => s.values));
+  const max = Math.max(options.max || 10, ...series.flatMap((s) => s.values));
   ctx.strokeStyle = 'rgba(29,42,68,0.7)';
   ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i += 1) {
+  for (let i = 0; i <= 4 && !spark; i += 1) {
     const y = pad.t + ((height - pad.t - pad.b) * i) / 4;
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(width - pad.r, y); ctx.stroke();
     ctx.fillStyle = 'rgba(107,122,150,0.85)';
@@ -504,72 +556,337 @@ function lineChart(canvas, series, options = {}) {
 const VIEWS = {};
 
 /* ------------------------------------------------------------------- home */
+const PROVIDERS = [
+  { name: 'grok', label: 'Grok', role: 'reasoning, planning, tool calls', keyUrl: 'https://console.x.ai', env: 'RAY_GROK_API_KEY' },
+  { name: 'gemini', label: 'Gemini', role: 'knowledge, documents, images', keyUrl: 'https://aistudio.google.com/apikey', env: 'RAY_GEMINI_API_KEY' },
+  { name: 'fish', label: 'Fish Audio', role: 'natural speech', keyUrl: 'https://fish.audio', env: 'RAY_FISH_API_KEY' },
+];
+
+function providerState(name) {
+  const health = (state.dashboard?.providers || {})[name] || {};
+  const status = (state.status?.providers || {})[name] || {};
+  return {
+    available: Boolean(health.available ?? status.available),
+    configured: Boolean(status.configured ?? health.configured),
+    detail: health.detail || status.detail || '',
+  };
+}
+
+function openKeyHelp() {
+  openModal(`
+    <h3>Connect your AI providers</h3>
+    <p class="muted small">Open <strong>Settings → AI providers</strong>, paste the key and press
+      <em>Save &amp; test</em>. RAY encrypts it with a key file inside its data folder and never
+      displays it again.</p>
+    ${PROVIDERS.map((provider) => `
+      <div class="list-item" style="align-items:flex-start">
+        <span class="grow">
+          <span class="title">${esc(provider.label)}</span>
+          <div class="meta">${esc(provider.role)}</div>
+          <div class="meta">Get a key: <a href="${provider.keyUrl}" target="_blank" rel="noreferrer noopener">${esc(provider.keyUrl)}</a></div>
+          <div class="meta mono">or set ${esc(provider.env)}</div>
+        </span>
+      </div>`).join('')}
+    <div class="banner warn" style="margin-top:12px">
+      Never paste a key into a chat or a source file — enter it in Settings so it stays encrypted on your PC.
+    </div>
+    <div class="modal-actions">
+      <button class="btn primary" data-act="go" data-section="settings">Open settings</button>
+      <button class="btn" data-act="close-modal">Close</button>
+    </div>`);
+}
+
+function providersCard() {
+  const rows = PROVIDERS.map((provider) => {
+    const state_ = providerState(provider.name);
+    const tone = state_.available ? 'ok' : state_.configured ? 'warn' : 'bad';
+    const label = state_.available ? 'connected' : state_.configured ? 'unreachable' : 'no key';
+    return `<div class="provider-row">
+      <span class="provider-dot ${tone}" title="${label}"></span>
+      <div>
+        <div class="strong">${esc(provider.label)}</div>
+        <div class="faint tiny">${esc(state_.detail || provider.role)}</div>
+      </div>
+      <div class="row">
+        <span class="pill ${tone}">${label}</span>
+        <button class="btn sm ${state_.configured ? 'ghost' : 'primary'}"
+          data-act="${state_.configured ? 'credential-test' : 'go'}"
+          ${state_.configured ? `data-name="${provider.name}"` : 'data-section="settings"'}>${state_.configured ? 'Test' : 'Add key'}</button>
+      </div>
+    </div>`;
+  }).join('');
+  const online = PROVIDERS.some((provider) => providerState(provider.name).available);
+  return `<div class="card">
+    <div class="card-head"><h2>AI providers</h2><span class="spacer"></span>
+      <span class="pill ${online ? 'ok' : 'warn'}">${online ? 'online' : 'offline'}</span></div>
+    ${rows}
+    <div class="row wrap" style="margin-top:10px">
+      <span class="faint tiny">Encrypted on this PC. Nothing is sent until you ask.</span>
+      <span class="spacer"></span>
+      <button class="btn sm ghost" data-act="key-help">Where do I get keys?</button>
+    </div>
+  </div>`;
+}
+
+function kpiCard(id, label, value, unit, hint, tone, iconName, values, max) {
+  const list = (values && values.length ? values : [0, 0]).slice(-44).join(',');
+  const color = tone === 'violet' ? '#9b8cff' : tone === 'amber' ? '#fbbf24' : tone === 'pink' ? '#f472b6' : '#3ddcf5';
+  return `<div class="kpi">
+    <div class="kpi-top"><span class="kpi-icon ${tone}">${icon(iconName, 15)}</span>${esc(label)}</div>
+    <div class="kpi-value">${value}<small>${unit}</small></div>
+    <div class="kpi-label">${esc(hint)}</div>
+    <canvas class="spark" id="spark-${id}" data-values="${list}" data-max="${max || 100}" data-color="${color}"></canvas>
+  </div>`;
+}
+
+function drawSparks() {
+  $$('.spark').forEach((canvas) => {
+    const values = String(canvas.dataset.values || '').split(',').map(Number).filter((value) => !Number.isNaN(value));
+    lineChart(canvas, [{ values: values.length > 1 ? values : [0, 0] }], {
+      spark: true,
+      colors: [canvas.dataset.color || '#3ddcf5'],
+      max: Number(canvas.dataset.max) || 100,
+    });
+  });
+}
+
+function miniCalendar(month) {
+  const weeks = (month && month.weeks) || [];
+  const head = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+    .map((day) => `<div class="faint tiny center">${day}</div>`).join('');
+  const cells = weeks.flat().map((day) => {
+    const dayNumber = Number(String(day.date).slice(8, 10));
+    const title = day.events && day.events.length ? day.events.map((event) => event.title).join(', ') : '';
+    return `<button class="mini-day ${day.is_today ? 'today' : ''} ${day.in_month ? '' : 'out'}"
+      data-act="calendar-day" data-date="${day.date}" title="${esc(title)}">${dayNumber}${day.events && day.events.length ? '<i></i>' : ''}</button>`;
+  }).join('');
+  return `<div class="card">
+    <div class="card-head"><h2>${esc((month && month.label) || 'Calendar')}</h2><span class="spacer"></span>
+      <button class="btn sm ghost" data-act="go" data-section="calendar">Open</button></div>
+    <div class="mini-cal">${head}${cells}</div>
+  </div>`;
+}
+
+function ringMarkup(id, percent, color) {
+  const circumference = 2 * Math.PI * 26;
+  const offset = circumference * (1 - clamp(percent, 0, 100) / 100);
+  return `<div class="ring" id="ring-${id}" style="width:66px;height:66px;flex-basis:66px">
+    <svg width="66" height="66" viewBox="0 0 66 66">
+      <circle cx="33" cy="33" r="26" fill="none" stroke="rgba(120,190,255,0.16)" stroke-width="7"/>
+      <circle class="value" cx="33" cy="33" r="26" fill="none" stroke="${color}" stroke-width="7"
+        stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
+    </svg>
+    <div class="ring-value" style="font-size:13px">${Math.round(percent)}%</div>
+  </div>`;
+}
+
+function statRows(system) {
+  const rows = [
+    ['CPU', `${Math.round(system.cpu?.percent ?? 0)}%`, `${system.cpu?.cores_logical ?? '—'} logical cores`],
+    ['Memory', `${Math.round(system.memory?.percent ?? 0)}%`, `${bytes(system.memory?.used_bytes)} / ${bytes(system.memory?.total_bytes)}`],
+    ['Storage', `${Math.round(system.disks?.[0]?.percent ?? 0)}%`, `${bytes(system.disks?.[0]?.free_bytes)} free`],
+    ['Network', `↓ ${rate(system.network?.download_bps)}`, `↑ ${rate(system.network?.upload_bps)}`],
+  ];
+  return rows.map(([label, value, hint]) => `
+    <div class="list-item" style="padding:7px 8px">
+      <span class="grow"><span class="title">${esc(label)}</span><div class="meta">${esc(hint)}</div></span>
+      <span class="strong num">${esc(value)}</span>
+    </div>`).join('');
+}
+
+function folderTiles() {
+  const folders = [
+    ['Documents', 'open my documents folder', 'folder'],
+    ['Downloads', 'open my downloads folder', 'downloads'],
+    ['Desktop', 'open my desktop folder', 'computer'],
+    ['Pictures', 'open my pictures folder', 'files'],
+  ];
+  return folders.map(([label, command, iconName]) => `
+    <button class="tile" data-act="quick" data-cmd="${esc(command)}" title="Open ${esc(label)}">
+      <span class="tile-icon">${icon(iconName, 20)}</span>${esc(label)}
+    </button>`).join('');
+}
+
+function usageCard(analytics) {
+  const usage = analytics?.usage?.totals || {};
+  const focus = analytics?.focus || {};
+  const cache = analytics?.cache || {};
+  const database = analytics?.database || {};
+  return `<div class="stat-row" style="justify-content:space-between">
+      <div class="stat"><div class="n">${num(usage.calls || 0)}</div><div class="l">AI calls</div></div>
+      <div class="stat"><div class="n">${num((usage.input_tokens || 0) + (usage.output_tokens || 0))}</div><div class="l">tokens</div></div>
+      <div class="stat"><div class="n">${num(usage.cached || 0)}</div><div class="l">cached</div></div>
+      <div class="stat"><div class="n">${num(focus.total_minutes || 0)}m</div><div class="l">focus</div></div>
+      <div class="stat"><div class="n">${bytes(database.size_bytes || 0)}</div><div class="l">database</div></div>
+      <div class="stat"><div class="n">${num(cache.live || 0)}</div><div class="l">cache entries</div></div>
+    </div>
+    <div class="faint tiny" style="margin-top:10px">Totals come from RAY's local usage log · nothing leaves this PC unless a provider call needs it.</div>`;
+}
+
+function securityCard(security) {
+  const policy = security?.policy || state.dashboard?.security || {};
+  const pending = (security?.pending || []).length;
+  const audit = security?.stats || {};
+  return `<div class="card">
+    <div class="card-head"><h2>Security</h2><span class="spacer"></span>
+      <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}">${policy.emergency_stop ? 'halted' : 'active'}</span></div>
+    <div class="row" style="gap:14px;align-items:center">
+      <span class="kpi-icon" style="width:44px;height:44px;border-radius:14px">${icon('security', 22)}</span>
+      <div class="grow">
+        <div class="strong">${esc((policy.mode || 'standard'))} mode</div>
+        <div class="faint tiny">${pending ? `${pending} approval(s) waiting` : 'no approvals waiting'} · ${num(audit.total || 0)} audited actions</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn sm" data-act="go" data-section="security">Open security center</button>
+      ${pending ? '<span class="pill warn">needs you</span>' : ''}
+    </div>
+  </div>`;
+}
+
 VIEWS.home = async function () {
-  const data = await api('/api/dashboard');
+  const [data, live, notes, month, analytics, security] = await Promise.all([
+    api('/api/dashboard'),
+    api('/api/system?history=48').catch(() => ({ history: [], snapshot: null })),
+    api('/api/notes').catch(() => ({ notes: [] })),
+    api('/api/calendar?view=month').catch(() => ({ weeks: [] })),
+    api('/api/analytics').catch(() => null),
+    api('/api/security').catch(() => null),
+  ]);
   state.dashboard = data;
-  const system = data.system || {};
-  const cpu = system.cpu?.percent ?? 0;
-  const memory = system.memory?.percent ?? 0;
-  const disk = system.disks?.[0]?.percent ?? 0;
+
+  const system = live.snapshot || data.system || {};
+  const history = live.history || [];
+  const series = {
+    cpu: history.map((sample) => Number(sample.cpu) || 0),
+    memory: history.map((sample) => Number(sample.memory) || 0),
+    disk: history.map((sample) => Number(sample.disk_percent) || 0),
+    network: history.map((sample) => Number(sample.download_bps) || 0),
+  };
+  const cpu = system.cpu?.percent ?? series.cpu.at(-1) ?? 0;
+  const memory = system.memory?.percent ?? series.memory.at(-1) ?? 0;
+  const diskPercent = system.disks?.[0]?.percent ?? series.disk.at(-1) ?? 0;
   const battery = system.battery;
+  const networkMax = Math.max(1024, ...series.network);
   const warnings = system.warnings || [];
+  const name = String(data.user_name || '').trim();
+  const initial = (name || 'R').charAt(0).toUpperCase();
+  const now = new Date();
+  const dayPercent = Math.round(((now.getHours() * 60 + now.getMinutes()) / 1440) * 100);
 
   view().innerHTML = `
-    <div class="hero">
-      <div>
-        <h2>${esc(data.greeting)}${data.user_name ? `, ${esc(data.user_name)}` : ''}</h2>
-        <div class="sub">${esc(data.date_label)} · ${data.tasks_stats.open} open task(s) · ${data.reminders.length} reminder(s) in the next day</div>
-        <div class="row wrap" style="margin-top:12px">
-          <span class="pill ${data.offline ? 'warn' : 'ok'}">${data.offline ? 'offline mode - local features only' : 'AI providers connected'}</span>
-          <span class="pill ${data.security.emergency_stop ? 'bad' : 'ok'}">${data.security.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
-          <span class="pill info">${data.automation.active}/${data.automation.workflows} automations running</span>
+    ${data.offline ? `<div class="banner">
+      <span>RAY is running offline: local tasks, files, notes and monitoring work. Add a key to enable chat, research and speech.</span>
+      <button class="btn sm primary" data-act="key-help">Connect AI</button></div>` : ''}
+    ${warnings.length ? `<div class="banner warn">⚠ ${esc(warnings.join(' · '))}</div>` : ''}
+
+    <section class="home-top">
+      <div class="hero">
+        <div class="hero-main">
+          <div class="hero-avatar">${esc(initial)}</div>
+          <div style="min-width:0">
+            <h2>${esc(data.greeting)}${name ? `, ${esc(name)}` : ''}!</h2>
+            <div class="sub">${esc(data.date_label)} · ${data.tasks_stats.open} open task(s) · ${data.reminders.length} reminder(s) in the next day</div>
+            <div class="progress" title="Day ${dayPercent}% elapsed"><i style="width:${dayPercent}%"></i></div>
+            <div class="row wrap" style="margin-top:10px">
+              <span class="pill ${data.offline ? 'warn' : 'ok'}">${data.offline ? 'offline mode' : 'AI connected'}</span>
+              <span class="pill ${data.security.emergency_stop ? 'bad' : 'ok'}">${data.security.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
+              <span class="pill info">${data.automation.active}/${data.automation.workflows} automations</span>
+              <span class="pill">${data.notifications.length ? `${data.unread_notifications} unread` : 'inbox clear'}</span>
+            </div>
+          </div>
+        </div>
+        <div class="hero-clock">
+          <div class="time" id="hero-time">${esc(now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))}</div>
+          <div class="date">${esc(system.identity?.hostname || 'this PC')} · ${esc(system.uptime?.human || '')}</div>
         </div>
       </div>
-      <div class="hero-clock">
-        <div class="time" id="hero-time">${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</div>
-        <div class="date">${esc(system.identity?.hostname || '')} · ${esc(system.identity?.platform || '')} ${esc(system.identity?.release || '')}</div>
+
+      <div class="kpi-grid">
+        ${kpiCard('cpu', 'CPU', Math.round(cpu), '%', `${system.cpu?.cores_logical ?? '—'} logical cores`, '', 'cpu', series.cpu, 100)}
+        ${kpiCard('memory', 'RAM', Math.round(memory), '%', `${bytes(system.memory?.used_bytes)} of ${bytes(system.memory?.total_bytes)}`, 'violet', 'memory', series.memory, 100)}
+        ${kpiCard('disk', 'Disk', Math.round(diskPercent), '%', `${bytes(system.disks?.[0]?.free_bytes)} free`, 'amber', 'disk', series.disk, 100)}
+        ${battery
+          ? kpiCard('battery', 'Battery', Math.round(battery.percent), '%', battery.plugged ? 'plugged in' : 'on battery', 'pink', 'battery', [], 100)
+          : kpiCard('network', 'Network', (system.network?.download_bps || 0) > 1048576 ? ((system.network.download_bps / 1048576).toFixed(1)) : Math.round((system.network?.download_bps || 0) / 1024), (system.network?.download_bps || 0) > 1048576 ? 'MB/s' : 'KB/s', `↑ ${rate(system.network?.upload_bps)}`, 'pink', 'network', series.network, networkMax)}
       </div>
-    </div>
+    </section>
 
-    ${warnings.length ? `<div class="banner">⚠ ${esc(warnings.join(' · '))}</div>` : ''}
-
-    <div class="grid cols-4">
-      ${ringCard('CPU', cpu, `${system.cpu?.cores_logical || '—'} logical cores`)}
-      ${ringCard('Memory', memory, `${bytes(system.memory?.used_bytes)} / ${bytes(system.memory?.total_bytes)}`)}
-      ${ringCard('Disk', disk, `${bytes(system.disks?.[0]?.free_bytes)} free`)}
-      <div class="card">
-        <div class="card-head"><h2>Battery &amp; network</h2></div>
-        <div class="metric">
-          <div class="value">${battery ? `${Math.round(battery.percent)}%` : 'AC power'}</div>
-          <div class="hint">${battery ? (battery.plugged ? 'plugged in' : `on battery${battery.minutes_left ? ` · ${battery.minutes_left} min left` : ''}`) : 'no battery detected'}</div>
-          <div class="hint mono">↓ ${rate(system.network?.download_bps)} · ↑ ${rate(system.network?.upload_bps)}</div>
-          <div class="hint">uptime ${esc(system.uptime?.human || '—')}</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="grid cols-3">
+    <section class="grid cols-3">
       <div class="card span-2">
-        <div class="card-head"><h2>Today</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="calendar">Open calendar</button></div>
+        <div class="card-head"><h2>Today's schedule</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="calendar">View calendar</button></div>
         ${scheduleList(data.schedule)}
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>Reminders</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="reminders">All</button></div>
+        <div class="section-title" style="margin-top:14px">Reminders</div>
         ${data.reminders.length ? data.reminders.map((item) => `
-          <div class="list-item"><span class="grow"><span class="title">${esc(item.title)}</span>
-            <div class="meta">${esc(timeLabel(item.due_at))}</div></span>
-            <button class="btn sm ghost" data-act="snooze" data-id="${item.id}">Snooze</button></div>`).join('')
+          <div class="list-item"><span class="pill info">${esc(timeLabel(item.due_at))}</span>
+            <span class="grow"><span class="title">${esc(item.title)}</span></span>
+            <button class="btn sm ghost" data-act="snooze" data-id="${item.id}">Snooze 10m</button></div>`).join('')
           : '<div class="empty">No reminders in the next 24 hours.</div>'}
       </div>
-    </div>
+      ${miniCalendar(month)}
+    </section>
 
-    <div class="grid cols-3">
+    <section class="grid cols-3">
+      <div class="card span-2">
+        <div class="card-head"><h2>Quick access</h2><span class="spacer"></span>
+          <span class="faint tiny">real actions, nothing simulated</span></div>
+        <div class="tile-grid">
+          <button class="tile" data-act="launch-app" data-target="calculator" title="Open the calculator">
+            <span class="tile-icon">${icon('calculator', 20)}</span>Calculator</button>
+          <button class="tile" data-act="launch-app" data-target="notepad" title="Open Notepad">
+            <span class="tile-icon violet">${icon('notepad', 20)}</span>Notepad</button>
+          <button class="tile" data-act="go" data-section="files" title="Browse and search files">
+            <span class="tile-icon amber">${icon('files', 20)}</span>File search</button>
+          <button class="tile" data-act="go" data-section="downloads" title="Open the Downloads view">
+            <span class="tile-icon green">${icon('downloads', 20)}</span>Downloads</button>
+          <button class="tile" data-act="screenshot" title="Capture the screen">
+            <span class="tile-icon pink">${icon('screenshot', 20)}</span>Screenshot</button>
+          <button class="tile" data-act="palette" title="Open the command center">
+            <span class="tile-icon">${icon('command', 20)}</span>Command</button>
+        </div>
+        <div class="section-title" style="margin-top:16px">Recent apps</div>
+        ${(data.recent_apps || []).length ? data.recent_apps.slice(0, 4).map((app) => `
+          <div class="list-item"><span class="grow"><span class="title">${esc(app.name)}</span>
+            <div class="meta">${esc(relative(app.last_launched))}</div></span>
+            <button class="btn sm ghost" data-act="launch-app" data-target="${esc(app.name)}">Open</button></div>`).join('')
+          : '<div class="empty">Apps you launch will appear here.</div>'}
+      </div>
+      ${providersCard()}
+    </section>
+
+    <section class="grid cols-3">
+      <div class="card span-2">
+        <div class="card-head"><h2>File explorer</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="files">Open files</button></div>
+        <div class="tile-grid four">${folderTiles()}</div>
+        <div class="section-title" style="margin-top:16px">Recent files</div>
+        ${data.recent_files.length ? data.recent_files.slice(0, 4).map((file) => `
+          <div class="list-item"><span class="grow"><span class="title">${esc(file.name)}</span>
+            <div class="meta">${esc(file.size_human)} · ${esc(relative(file.modified))}</div></span>
+            <button class="btn sm ghost" data-act="open-file" data-path="${esc(file.path)}">Open</button></div>`).join('')
+          : '<div class="empty">No recent files in Downloads, Documents or Desktop.</div>'}
+      </div>
       <div class="card">
-        <div class="card-head"><h2>Tasks to move on</h2><span class="spacer"></span>
+        <div class="card-head"><h2>System overview</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="system">Details</button></div>
+        <div class="row" style="gap:16px;align-items:center;margin-bottom:8px">
+          ${ringMarkup('memory', memory, memory > 88 ? '#fb7185' : '#9b8cff')}
+          <div class="grow">
+            <div class="strong">${esc(system.identity?.hostname || 'this PC')}</div>
+            <div class="faint tiny">${esc(system.identity?.platform || '')} ${esc(system.identity?.release || '')}</div>
+            <div class="faint tiny">uptime ${esc(system.uptime?.human || '—')}</div>
+          </div>
+        </div>
+        ${statRows(system)}
+      </div>
+    </section>
+
+    <section class="grid cols-3">
+      <div class="card">
+        <div class="card-head"><h2>Tasks</h2><span class="spacer"></span>
           <button class="btn sm ghost" data-act="go" data-section="tasks">All</button></div>
-        ${data.tasks.length ? data.tasks.map((task) => `
+        ${data.tasks.length ? data.tasks.slice(0, 5).map((task) => `
           <div class="list-item">
             <button class="btn sm ghost" data-act="complete-task" data-id="${task.id}" title="Mark done">✓</button>
             <span class="grow"><span class="title">${esc(task.title)}</span>
@@ -578,61 +895,51 @@ VIEWS.home = async function () {
           </div>`).join('') : '<div class="empty">Nothing overdue. Add a task when you are ready.</div>'}
       </div>
       <div class="card">
-        <div class="card-head"><h2>Recent files</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="files">Browse</button></div>
-        ${data.recent_files.length ? data.recent_files.map((file) => `
-          <div class="list-item"><span class="grow"><span class="title">${esc(file.name)}</span>
-            <div class="meta">${esc(file.size_human)} · ${esc(relative(file.modified))}</div></span>
-            <button class="btn sm ghost" data-act="open-file" data-path="${esc(file.path)}">Open</button></div>`).join('')
-          : '<div class="empty">No recent files found in Downloads/Documents/Desktop.</div>'}
+        <div class="card-head"><h2>Notes</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="notes">Open</button></div>
+        ${notes.notes.length ? notes.notes.slice(0, 5).map((note) => `
+          <button class="list-item" data-act="go" data-section="notes" style="width:100%">
+            <span class="grow"><span class="title">${note.pinned ? '📌 ' : ''}${esc(note.title)}</span>
+              <div class="meta">${esc(note.category)} · ${esc(relative(note.updated_at))}</div></span>
+          </button>`).join('') : '<div class="empty">No notes yet. Write your first one.</div>'}
       </div>
       <div class="card">
-        <div class="card-head"><h2>Quick actions</h2></div>
-        <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px">
-          <button class="btn" data-act="quick" data-cmd="Check my laptop performance">System check</button>
-          <button class="btn" data-act="quick" data-cmd="Take a screenshot">Screenshot</button>
-          <button class="btn" data-act="quick" data-cmd="Organise my Downloads folder">Tidy Downloads</button>
-          <button class="btn" data-act="quick" data-cmd="What is on my schedule today">Today's plan</button>
-          <button class="btn" data-act="quick" data-cmd="Start a focus session for 25 minutes">Focus 25 min</button>
-          <button class="btn" data-act="quick" data-cmd="Find my latest PDF">Latest PDF</button>
-        </div>
-        <div class="section-title" style="margin-top:16px">Automation</div>
-        <div class="list">
-          ${(data.automation.recent_runs || []).slice(0, 3).map((run) => `
-            <div class="list-item"><span class="grow"><span class="title">${esc(run.trigger)} run</span>
-              <div class="meta">${esc(relative(run.started_at))}</div></span>
-              <span class="pill ${run.status === 'ok' ? 'ok' : 'warn'}">${esc(run.status)}</span></div>`).join('')
-            || '<div class="empty">No automation has run yet.</div>'}
-        </div>
-      </div>
-    </div>
-
-    <div class="grid cols-3">
-      <div class="card span-2">
         <div class="card-head"><h2>Notifications</h2><span class="spacer"></span>
           <span class="pill">${data.unread_notifications} unread</span></div>
-        ${data.notifications.length ? data.notifications.map((item) => `
+        ${data.notifications.length ? data.notifications.slice(0, 4).map((item) => `
           <div class="list-item"><span class="grow"><span class="title">${esc(item.title)}</span>
             <div class="meta">${esc(item.body || '')}</div></span>
             <span class="faint tiny">${esc(relative(item.ts))}</span></div>`).join('')
-          : '<div class="empty">Notifications from reminders and automations appear here.</div>'}
+          : '<div class="empty">Reminders and automations report here.</div>'}
+      </div>
+    </section>
+
+    <section class="grid cols-3">
+      <div class="card span-2">
+        <div class="card-head"><h2>Analytics</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="quick" data-cmd="Show my usage and performance">Ask RAY</button></div>
+        ${usageCard(analytics)}
+      </div>
+      ${securityCard(security)}
+    </section>
+
+    <section class="grid cols-3">
+      <div class="card span-2 quote">
+        <p>"A better tomorrow starts with what you do today."</p>
+        <div class="by">RAY · your local assistant</div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>Music</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="media">Library</button></div>
-        <p class="faint small">Play something from your local library.</p>
-        <div class="col" style="margin-top:10px">
-          <input type="text" id="home-media-query" placeholder="Track, artist or playlist" />
-          <button class="btn primary" data-act="play-media-input" data-input="home-media-query">Play</button>
-        </div>
-        <div class="section-title" style="margin-top:16px">Recent apps</div>
-        ${(data.recent_apps || []).length ? data.recent_apps.slice(0, 4).map((app) => `
-          <div class="list-item"><span class="grow"><span class="title">${esc(app.name)}</span>
-            <div class="meta">${esc(relative(app.last_launched))}</div></span>
-            <button class="btn sm ghost" data-act="launch-app" data-target="${esc(app.name)}">Open</button></div>`).join('')
-          : '<div class="empty">Applications you open will appear here.</div>'}
+        <div class="card-head"><h2>Automation</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="automation">Manage</button></div>
+        ${(data.automation.recent_runs || []).slice(0, 3).map((run) => `
+          <div class="list-item"><span class="grow"><span class="title">${esc(run.trigger)} run</span>
+            <div class="meta">${esc(relative(run.started_at))}</div></span>
+            <span class="pill ${run.status === 'ok' ? 'ok' : 'warn'}">${esc(run.status)}</span></div>`).join('')
+          || '<div class="empty">No automation has run yet.</div>'}
       </div>
-    </div>`;
+    </section>`;
+
+  drawSparks();
 
   const tick = () => {
     const node = $('#hero-time');
@@ -642,46 +949,24 @@ VIEWS.home = async function () {
   state.timers.sys = setInterval(async () => {
     if (state.section !== 'home') return;
     try {
-      const live = await api('/api/system?history=1');
-      state.lastSystem = live;
-      const snapshot = live.snapshot;
+      const next = await api('/api/system?history=1');
+      const snapshot = next.snapshot;
+      state.lastSystem = next;
       const setRing = (id, value) => {
         const node = $(`#ring-${id}`);
         if (!node) return;
         const circle = node.querySelector('circle.value');
-        const text = node.querySelector('.ring-value');
         if (circle) {
-          const circumference = 2 * Math.PI * 30;
+          const circumference = 2 * Math.PI * 26;
           circle.style.strokeDasharray = `${(circumference * clamp(value, 0, 100)) / 100} ${circumference}`;
         }
+        const text = node.querySelector('.ring-value');
         if (text) text.textContent = `${Math.round(value)}%`;
       };
-      setRing('cpu', snapshot.cpu.percent);
       setRing('memory', snapshot.memory.percent);
-      setRing('disk', snapshot.disks?.[0]?.percent || 0);
     } catch (error) { /* transient */ }
-  }, 5000);
+  }, 8000);
 };
-
-function ringCard(label, value, hint) {
-  const circumference = 2 * Math.PI * 30;
-  const offset = circumference * (1 - clamp(value, 0, 100) / 100);
-  const color = value > 88 ? '#f87171' : value > 70 ? '#fbbf24' : '#2fd6e8';
-  return `<div class="card">
-    <div class="card-head"><h2>${esc(label)}</h2></div>
-    <div class="ring-wrap">
-      <div class="ring" id="ring-${label.toLowerCase()}">
-        <svg width="74" height="74" viewBox="0 0 74 74">
-          <circle cx="37" cy="37" r="30" fill="none" stroke="#17233a" stroke-width="7"/>
-          <circle class="value" cx="37" cy="37" r="30" fill="none" stroke="${color}" stroke-width="7"
-            stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
-        </svg>
-        <div class="ring-value">${Math.round(value)}%</div>
-      </div>
-      <div class="metric"><div class="hint">${esc(hint)}</div></div>
-    </div>
-  </div>`;
-}
 
 function rate(bps) {
   if (!bps) return '0 B/s';
@@ -2166,6 +2451,19 @@ VIEWS.settings = async function () {
           <button class="btn primary" id="save-models">Save models</button>
           <button class="btn" id="test-all">Test all providers</button>
         </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><h2>Where to get keys</h2></div>
+          <div class="list">
+            ${PROVIDERS.map((provider) => `
+              <div class="list-item">
+                <span class="grow"><span class="title">${esc(provider.label)}</span>
+                  <div class="meta">${esc(provider.role)}</div></span>
+                <a class="btn sm ghost" href="${provider.keyUrl}" target="_blank" rel="noreferrer noopener">Get key</a>
+              </div>`).join('')}
+          </div>
+          <div class="faint tiny" style="margin-top:8px">Keys are encrypted with a key file in RAY's data folder.
+            You can also set ${esc(PROVIDERS.map((provider) => provider.env).join(', '))} before launch.</div>
+        </div>
         <div class="section-title" style="margin-top:16px">Routing</div>
         <table class="table">
           <thead><tr><th>Task</th><th>Preference</th></tr></thead>
@@ -2359,7 +2657,14 @@ VIEWS.settings = async function () {
 /* --------------------------------------------------------------- actions */
 const ACTIONS = {
   'close-modal': () => closeModal(),
-  go: (dataset) => go(dataset.section),
+  go: (dataset) => { closeModal(); go(dataset.section); },
+  palette: () => openPalette(),
+  'key-help': () => openKeyHelp(),
+  'calendar-day': (dataset) => {
+    const [year, month] = String(dataset.date).split('-').map(Number);
+    state.calendarMonth = { year, month };
+    go('calendar');
+  },
   quick: (dataset) => runCommand(dataset.cmd),
   'open-file': (dataset) => api('/api/files/open', { method: 'POST', body: { path: dataset.path } })
     .then(() => toast('Opened', dataset.path.split(/[\\/]/).pop(), 'ok'))
@@ -2475,9 +2780,17 @@ const ACTIONS = {
       refreshStatus();
     } catch (error) { toast('Could not save', error.message, 'error', 7000); }
   },
-  'credential-test': (dataset) => api('/api/providers/test', { method: 'POST', body: { name: dataset.name } })
-    .then((result) => toast(`${dataset.name} test`, result.detail, result.available ? 'ok' : 'warn', 7000))
-    .catch((error) => toast('Test failed', error.message, 'error')),
+  'credential-test': async (dataset) => {
+    try {
+      const result = await api('/api/providers/test', { method: 'POST', body: { name: dataset.name } });
+      const ok = result.ok !== false;
+      toast(`${dataset.name} test`, result.detail || (ok ? `reachable${result.latency_ms ? ` in ${result.latency_ms} ms` : ''}` : 'failed'), ok ? 'ok' : 'warn', 6000);
+    } catch (error) {
+      toast(`${dataset.name} test failed`, error.message, 'error', 6000);
+    }
+    await refreshStatus();
+    if (state.section === 'home' || state.section === 'settings') go(state.section);
+  },
   'credential-delete': async (dataset) => {
     if (!await confirmAction(`Remove ${dataset.name} key?`, 'Without a key this provider stays disabled.', 'Remove')) return;
     await api('/api/credentials', { method: 'DELETE', body: { name: dataset.name } })
@@ -2601,6 +2914,9 @@ async function boot() {
     loadApprovals();
   });
   $('#btn-settings').addEventListener('click', () => go('settings'));
+  const voiceOrb = $('#btn-voice-orb');
+  if (voiceOrb) voiceOrb.addEventListener('click', () => go('voice'));
+  startClock();
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') { closePalette(); closeModal(); }
