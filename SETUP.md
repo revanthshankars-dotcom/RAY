@@ -114,7 +114,7 @@ Checks in the codespace terminal:
 
 ```bash
 python main.py --check     # python, packages, data home, which providers are configured
-python -m pytest -q        # 275 tests, offline
+python -m pytest -q        # 277 tests, offline
 ```
 
 **What a Linux codespace can and cannot do.** It can plan, chat, research, read
@@ -286,6 +286,8 @@ What you are agreeing to, in plain words:
 | Fish bills those minutes to **your** account | RAY cannot meter the call the way it meters tokens, so it counts the call timer and compares it with your budget |
 | The budget **warns, never blocks** | you asked for a warning; the pill turns amber and the usage line says how far over you are |
 | Every call is written to the local audit log (`voice_agent_session`) | you can see minutes per month in Security → audit |
+| A call is counted even if you navigate away, reload or close the tab | the minutes are billed either way, so RAY flushes the remainder as the page unloads |
+| **Reset count** zeroes this month's counter | it is not a silent delete: the cleared total is written to the audit log as `voice_agent_usage_reset` |
 | The widget file is RAY's own copy (MIT), loaded only when you press Start | no CDN, and no third-party code runs while you browse |
 | A browser tab must have microphone permission | the in-app preview pane inside a sandboxed iframe may refuse it — open `http://localhost:8765` in a normal tab for calls |
 

@@ -544,3 +544,26 @@ def test_the_widget_is_served_from_disk_not_a_cdn(client):
         assert response.status == 200
         assert "javascript" in response.headers.get("Content-Type", "")
     assert b"fish-agent" in body and len(body) > 100_000
+
+
+def test_resetting_the_voice_counter_records_what_it_cleared(client):
+    client.post("/api/voice/agent", {"agent_id": AGENT_ID, "enabled": True, "cap_minutes": 10})
+    client.post("/api/voice/agent/session", {"seconds": 120})
+    client.post("/api/voice/agent/session", {"seconds": 30})
+    before = client.get("/api/voice/agent")["data"]["usage"]
+    assert before["calls"] == 2
+
+    after = client.post("/api/voice/agent/usage/reset", {})["data"]
+    assert after["calls"] == 0 and after["seconds_used"] == 0
+    assert after["cleared_calls"] == 2 and after["cleared_seconds"] == 150.0
+
+    # nothing is hidden: the cleared total is in the audit trail
+    audit = client.get("/api/security?limit=50")["data"]["audit"]
+    resets = [row for row in audit if row["action"] == "voice_agent_usage_reset"]
+    assert resets and "cleared_calls" in resets[0]["detail"]
+    assert "150" in resets[0]["detail"]
+
+
+def test_resetting_an_empty_month_is_harmless(client):
+    payload = client.post("/api/voice/agent/usage/reset", {})["data"]
+    assert payload["calls"] == 0 and payload["cleared_calls"] == 0

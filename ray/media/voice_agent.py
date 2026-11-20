@@ -152,6 +152,38 @@ class VoiceAgent:
             "percent": min(100, round((seconds / 60) / cap * 100)) if cap else 0,
         }
 
+    def reset_month(self) -> dict[str, Any]:
+        """Clear this month's counter - and record exactly what was cleared.
+
+        Deleting usage without a trace would be the dishonest version of this
+        feature, so the totals are written to the audit log first.
+        """
+        month = month_key()
+        rows = self.db.query(
+            "SELECT COUNT(*) AS calls, COALESCE(SUM(seconds), 0) AS seconds "
+            "FROM voice_sessions WHERE substr(started_at, 1, 7) = ?",
+            (month,),
+        )
+        row = rows[0] if rows else {"calls": 0, "seconds": 0}
+        cleared_calls = int(row.get("calls") or 0)
+        cleared_seconds = round(float(row.get("seconds") or 0), 1)
+        if cleared_calls:
+            self.db.execute(
+                "DELETE FROM voice_sessions WHERE substr(started_at, 1, 7) = ?", (month,)
+            )
+        if self.audit is not None:
+            self.audit.record(
+                "voice_agent_usage_reset",
+                tool="voice",
+                target=month,
+                result="ok",
+                detail={"cleared_calls": cleared_calls, "cleared_seconds": cleared_seconds},
+            )
+        usage = self.usage()
+        usage["cleared_calls"] = cleared_calls
+        usage["cleared_seconds"] = cleared_seconds
+        return usage
+
     # --------------------------------------------------------------- status
     def describe(self) -> dict[str, Any]:
         """What the UI needs to draw the panel, including the honest caveats."""
