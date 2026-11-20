@@ -54,6 +54,18 @@ const ICONS = {
   search: 'M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM20 20l-4.4-4.4',
   plus: 'M12 5v14M5 12h14',
   external: 'M14 4h6v6M20 4l-8.5 8.5M18 14v6H4V6h6',
+  lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+  moon: 'M20 14.5A8 8 0 0 1 9.5 4 8.2 8.2 0 1 0 20 14.5Z',
+  restart: 'M20 12a8 8 0 1 1-2.4-5.7M20 4v4.5h-4.5',
+  power: 'M12 3.5V11M7.2 6.4a7 7 0 1 0 9.6 0',
+  timer: 'M12 7v5l3 2M9 3.5h6M12 20.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z',
+  globe: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 0c3 3.5 3 14.5 0 18m0-18c-3 3.5-3 14.5 0 18M3.6 9h16.8M3.6 15h16.8',
+  bell: 'M12 3a6 6 0 0 0-6 6v4l-1.5 3h15L18 13V9a6 6 0 0 0-6-6ZM9.5 19a2.5 2.5 0 0 0 5 0',
+  mic: 'M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3ZM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21',
+  film: 'M4 5h16v14H4zM8 5v14M16 5v14M4 9h4M4 15h4M16 9h4M16 15h4',
+  music: 'M9 18V7l10-2v11M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm10-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
+  check: 'M4.5 12.5l5 5 10-11',
+  scan: 'M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16M4 12h16',
 };
 
 const NAV = [
@@ -761,45 +773,8 @@ function miniCalendar(month) {
   </div>`;
 }
 
-function ringMarkup(id, percent, color) {
-  const circumference = 2 * Math.PI * 26;
-  const offset = circumference * (1 - clamp(percent, 0, 100) / 100);
-  return `<div class="ring" id="ring-${id}" style="width:66px;height:66px;flex-basis:66px">
-    <svg width="66" height="66" viewBox="0 0 66 66">
-      <circle cx="33" cy="33" r="26" fill="none" stroke="rgba(120,190,255,0.16)" stroke-width="7"/>
-      <circle class="value" cx="33" cy="33" r="26" fill="none" stroke="${color}" stroke-width="7"
-        stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}"/>
-    </svg>
-    <div class="ring-value" style="font-size:13px">${Math.round(percent)}%</div>
-  </div>`;
-}
 
-function statRows(system) {
-  const rows = [
-    ['CPU', `${Math.round(system.cpu?.percent ?? 0)}%`, `${system.cpu?.cores_logical ?? '—'} logical cores`],
-    ['Memory', `${Math.round(system.memory?.percent ?? 0)}%`, `${bytes(system.memory?.used_bytes)} / ${bytes(system.memory?.total_bytes)}`],
-    ['Storage', `${Math.round(system.disks?.[0]?.percent ?? 0)}%`, `${bytes(system.disks?.[0]?.free_bytes)} free`],
-    ['Network', `↓ ${rate(system.network?.download_bps)}`, `↑ ${rate(system.network?.upload_bps)}`],
-  ];
-  return rows.map(([label, value, hint]) => `
-    <div class="list-item" style="padding:7px 8px">
-      <span class="grow"><span class="title">${esc(label)}</span><div class="meta">${esc(hint)}</div></span>
-      <span class="strong num">${esc(value)}</span>
-    </div>`).join('');
-}
 
-function folderTiles() {
-  const folders = [
-    ['Documents', 'open my documents folder', 'folder'],
-    ['Downloads', 'open my downloads folder', 'downloads'],
-    ['Desktop', 'open my desktop folder', 'computer'],
-    ['Pictures', 'open my pictures folder', 'files'],
-  ];
-  return folders.map(([label, command, iconName]) => `
-    <button class="tile" data-act="quick" data-cmd="${esc(command)}" title="Open ${esc(label)}">
-      <span class="tile-icon">${icon(iconName, 20)}</span>${esc(label)}
-    </button>`).join('');
-}
 
 function usageCard(analytics) {
   const usage = analytics?.usage?.totals || {};
@@ -817,65 +792,175 @@ function usageCard(analytics) {
     <div class="faint tiny" style="margin-top:10px">Totals come from RAY's local usage log · nothing leaves this PC unless a provider call needs it.</div>`;
 }
 
-function securityCard(security) {
-  const policy = security?.policy || state.dashboard?.security || {};
-  const pending = (security?.pending || []).length;
-  const audit = security?.stats || {};
-  return `<div class="card">
-    <div class="card-head"><h2>Security</h2><span class="spacer"></span>
-      <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}">${policy.emergency_stop ? 'halted' : 'active'}</span></div>
-    <div class="row" style="gap:14px;align-items:center">
-      <span class="kpi-icon" style="width:44px;height:44px;border-radius:14px">${icon('security', 22)}</span>
-      <div class="grow">
-        <div class="strong">${esc((policy.mode || 'standard'))} mode</div>
-        <div class="faint tiny">${pending ? `${pending} approval(s) waiting` : 'no approvals waiting'} · ${num(audit.total || 0)} audited actions</div>
-      </div>
+
+function updateStatusChips(system) {
+  const net = $('#status-net');
+  const netLabel = $('#status-net-label');
+  if (net && netLabel) {
+    const down = Number(system?.network?.download_bps || 0);
+    netLabel.textContent = rate(down);
+    net.classList.remove('off');
+  }
+  const battery = $('#status-battery');
+  const batteryLabel = $('#status-battery-label');
+  if (battery && batteryLabel) {
+    const pack = system?.battery;
+    if (pack) {
+      batteryLabel.textContent = `${Math.round(pack.percent)}%${pack.plugged ? ' ⚡' : ''}`;
+      battery.classList.remove('off');
+      battery.classList.toggle('warn', pack.percent <= 30 && !pack.plugged);
+      battery.classList.toggle('bad', pack.percent <= 15 && !pack.plugged);
+    } else {
+      battery.classList.add('off');
+    }
+  }
+}
+
+function ringTile({ label, percent, center, hint, color, unknown }) {
+  const known = !unknown && typeof percent === 'number' && !Number.isNaN(percent);
+  const value = known ? clamp(percent, 0, 100) : 0;
+  const circumference = 2 * Math.PI * 22;
+  const offset = circumference * (1 - value / 100);
+  return `<div class="ring-tile">
+    <div class="ring-sm ${known ? '' : 'none'}">
+      <svg viewBox="0 0 54 54">
+        <circle cx="27" cy="27" r="22" fill="none" stroke="rgba(120,190,255,0.16)" stroke-width="6"/>
+        <circle cx="27" cy="27" r="22" fill="none" stroke="${color}" stroke-width="6"
+          stroke-linecap="round" stroke-dasharray="${circumference}"
+          stroke-dashoffset="${known ? offset : circumference}"/>
+      </svg>
+      <div class="ring-value">${known ? center || `${Math.round(percent)}%` : '—'}</div>
     </div>
-    <div class="row" style="margin-top:12px">
-      <button class="btn sm" data-act="go" data-section="security">Open security center</button>
-      ${pending ? '<span class="pill warn">needs you</span>' : ''}
+    <div class="meta">
+      <span class="name">${esc(label)}</span>
+      <span class="val">${known ? (center || `${Math.round(percent)}%`) : 'n/a'}</span>
+      <span class="hint">${esc(hint || '')}</span>
     </div>
   </div>`;
 }
 
+function tempReading(system) {
+  const temps = system?.temperatures || {};
+  if (!temps.available || !Array.isArray(temps.sensors) || !temps.sensors.length) {
+    return { known: false, reason: temps.reason || 'no temperature sensor exposed' };
+  }
+  const hottest = temps.sensors.reduce((best, sensor) => (
+    sensor.current_c > (best ? best.current_c : -Infinity) ? sensor : best
+  ), null);
+  if (!hottest) return { known: false, reason: 'no readings' };
+  return { known: true, celsius: hottest.current_c, label: hottest.label || hottest.chip };
+}
+
+function featureGrid() {
+  return NAV.filter((item) => item.id && item.id !== 'search')
+    .map((item) => `<button class="feature" data-act="go" data-section="${item.id}" title="Open ${esc(item.label)}">
+        ${icon(item.id, 19)}<span class="label">${esc(item.label)}</span></button>`).join('');
+}
+
+const QUICK_TOOLS = [
+  { label: 'Note', icon: 'notepad', tone: '', act: 'go', section: 'notes' },
+  { label: 'Calculator', icon: 'calculator', tone: 'violet', act: 'launch-app', target: 'calculator' },
+  { label: 'Focus timer', icon: 'timer', tone: 'amber', act: 'go', section: 'productivity' },
+  { label: 'Screenshot', icon: 'screenshot', tone: 'green', act: 'screenshot' },
+  { label: 'System report', icon: 'system', tone: 'pink', act: 'quick', cmd: 'check my system' },
+  { label: 'Command', icon: 'command', tone: '', act: 'palette' },
+];
+
+const BROWSER_LINKS = [
+  { label: 'Google', letter: 'G', url: 'https://www.google.com' },
+  { label: 'YouTube', letter: 'Y', url: 'https://www.youtube.com' },
+  { label: 'Wikipedia', letter: 'W', url: 'https://en.wikipedia.org' },
+  { label: 'GitHub', letter: 'G', url: 'https://github.com' },
+];
+
+function chatMessageMarkup(message) {
+  const user = message.role === 'user';
+  return `<div class="chat-msg ${user ? 'user' : ''}">
+    <span class="who">${user ? 'You' : 'R'}</span>
+    <div class="chat-bubble ${message.kind || ''}">${esc(message.text)}</div>
+  </div>`;
+}
+
+function homeChatGreeting() {
+  const name = String(state.dashboard?.user_name || '').trim();
+  return `Hi${name ? ` ${name}` : ''} — ask me anything, or pick a quick tool. Replies come from your configured provider; anything that changes this PC still goes through RAY's permission checks.`;
+}
+
+function paintHomeChat() {
+  const log = $('#home-chat-log');
+  if (!log) return;
+  const messages = state.homeChat?.messages || [];
+  log.innerHTML = messages.length
+    ? messages.map(chatMessageMarkup).join('')
+    : `<div class="chat-msg"><span class="who">R</span><div class="chat-bubble">${esc(homeChatGreeting())}</div></div>`;
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendHomeChat(text) {
+  state.homeChat = state.homeChat || { agent: 'assistant', messages: [] };
+  state.homeChat.messages.push({ role: 'user', text });
+  state.homeChat.messages.push({ role: 'ray', text: 'Thinking…', kind: 'thinking' });
+  paintHomeChat();
+  try {
+    const result = await api('/api/command', {
+      method: 'POST',
+      body: { text, agent: state.homeChat.agent || 'assistant' },
+    });
+    const reply = result.answer || result.error || (result.status === 'completed' ? 'Done.' : 'No reply.');
+    state.homeChat.messages[state.homeChat.messages.length - 1] = { role: 'ray', text: reply };
+  } catch (error) {
+    state.homeChat.messages[state.homeChat.messages.length - 1] = {
+      role: 'ray', text: `I could not reach a model: ${error.message}`, kind: 'error',
+    };
+  }
+  paintHomeChat();
+}
+
 VIEWS.home = async function () {
-  const [data, live, notes, month, analytics, security] = await Promise.all([
+  const [data, live, notes, month, analytics, security, automation, agents, media] = await Promise.all([
     api('/api/dashboard'),
     api('/api/system?history=48').catch(() => ({ history: [], snapshot: null })),
     api('/api/notes').catch(() => ({ notes: [] })),
     api('/api/calendar?view=month').catch(() => ({ weeks: [] })),
     api('/api/analytics').catch(() => null),
     api('/api/security').catch(() => null),
+    api('/api/automation').catch(() => null),
+    api('/api/agents').catch(() => ({ agents: [] })),
+    api('/api/media?limit=60').catch(() => ({ library: [] })),
   ]);
   state.dashboard = data;
 
   const system = live.snapshot || data.system || {};
   const history = live.history || [];
-  const series = {
-    cpu: history.map((sample) => Number(sample.cpu) || 0),
-    memory: history.map((sample) => Number(sample.memory) || 0),
-    disk: history.map((sample) => Number(sample.disk_percent) || 0),
-    network: history.map((sample) => Number(sample.download_bps) || 0),
-  };
-  const cpu = system.cpu?.percent ?? series.cpu.at(-1) ?? 0;
-  const memory = system.memory?.percent ?? series.memory.at(-1) ?? 0;
-  const diskPercent = system.disks?.[0]?.percent ?? series.disk.at(-1) ?? 0;
-  const battery = system.battery;
-  const networkMax = Math.max(1024, ...series.network);
+  const cpu = system.cpu?.percent ?? 0;
+  const memory = system.memory?.percent ?? 0;
+  const diskPercent = system.disks?.[0]?.percent ?? 0;
+  const temp = tempReading(system);
+  const tempPercent = temp.known ? Math.min(100, (temp.celsius / 110) * 100) : 0;
   const warnings = system.warnings || [];
   const name = String(data.user_name || '').trim();
   const initial = (name || 'R').charAt(0).toUpperCase();
   const now = new Date();
   const dayPercent = Math.round(((now.getHours() * 60 + now.getMinutes()) / 1440) * 100);
+  const policy = security?.policy || data.security || {};
+  const pending = (security?.pending || []).length;
+  const auditTotal = security?.stats?.total || 0;
+  const online = !data.offline;
+
+  const workflows = automation?.workflows || [];
+  const agentList = agents.agents || [];
+  const library = media.library || [];
+  const audioCount = library.filter((item) => item.kind === 'audio').length;
+  const videoCount = library.filter((item) => item.kind === 'video').length;
 
   view().innerHTML = `
     ${data.offline ? `<div class="banner">
-      <span>RAY is offline: local tasks, files, notes and monitoring work. Install the Cursor CLI or add a Gemini key to enable chat, research and speech.</span>
+      <span>RAY is offline: local tools still work. Install the Cursor CLI or add a Gemini key to enable chat, research and tool planning.</span>
       <button class="btn sm primary" data-act="key-help">Setup guide</button></div>` : ''}
     ${warnings.length ? `<div class="banner warn">⚠ ${esc(warnings.join(' · '))}</div>` : ''}
 
-    <section class="home-top">
-      <div class="hero">
+    <section class="home-cmd">
+      <div class="card">
         <div class="hero-main">
           <div class="hero-avatar">${esc(initial)}</div>
           <div style="min-width:0">
@@ -883,157 +968,305 @@ VIEWS.home = async function () {
             <div class="sub">${esc(data.date_label)} · ${data.tasks_stats.open} open task(s) · ${data.reminders.length} reminder(s) in the next day</div>
             <div class="progress" title="Day ${dayPercent}% elapsed"><i style="width:${dayPercent}%"></i></div>
             <div class="row wrap" style="margin-top:10px">
-              <span class="pill ${data.offline ? 'warn' : 'ok'}">${data.offline ? 'offline mode' : 'AI connected'}</span>
-              <span class="pill ${data.security.emergency_stop ? 'bad' : 'ok'}">${data.security.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
+              <span class="pill ${online ? 'ok' : 'warn'}">${online ? 'AI connected' : 'offline mode'}</span>
+              <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}">${policy.emergency_stop ? 'emergency stop' : 'permissions active'}</span>
               <span class="pill info">${data.automation.active}/${data.automation.workflows} automations</span>
-              <span class="pill">${data.notifications.length ? `${data.unread_notifications} unread` : 'inbox clear'}</span>
             </div>
           </div>
         </div>
-        <div class="hero-clock">
-          <div class="time" id="hero-time">${esc(now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))}</div>
-          <div class="date">${esc(system.identity?.hostname || 'this PC')} · ${esc(system.uptime?.human || '')}</div>
+        <div class="quote" style="margin-top:16px">
+          <p>"A better tomorrow starts with what you do today."</p>
+          <div class="by">RAY · running locally on this PC</div>
         </div>
       </div>
 
-      <div class="kpi-grid">
-        ${kpiCard('cpu', 'CPU', Math.round(cpu), '%', `${system.cpu?.cores_logical ?? '—'} logical cores`, '', 'cpu', series.cpu, 100)}
-        ${kpiCard('memory', 'RAM', Math.round(memory), '%', `${bytes(system.memory?.used_bytes)} of ${bytes(system.memory?.total_bytes)}`, 'violet', 'memory', series.memory, 100)}
-        ${kpiCard('disk', 'Disk', Math.round(diskPercent), '%', `${bytes(system.disks?.[0]?.free_bytes)} free`, 'amber', 'disk', series.disk, 100)}
-        ${battery
-          ? kpiCard('battery', 'Battery', Math.round(battery.percent), '%', battery.plugged ? 'plugged in' : 'on battery', 'pink', 'battery', [], 100)
-          : kpiCard('network', 'Network', (system.network?.download_bps || 0) > 1048576 ? ((system.network.download_bps / 1048576).toFixed(1)) : Math.round((system.network?.download_bps || 0) / 1024), (system.network?.download_bps || 0) > 1048576 ? 'MB/s' : 'KB/s', `↑ ${rate(system.network?.upload_bps)}`, 'pink', 'network', series.network, networkMax)}
+      <div class="card orb-card">
+        <div class="orb-stage" aria-hidden="true">
+          <div class="orb"><div class="orb-core">RAY</div></div>
+        </div>
+        <div class="orb-word">Always Here. Always Ahead.</div>
+        <div class="orb-sub">${online ? 'connected and ready' : 'offline · local tools ready'}</div>
+        <div class="orb-actions">
+          <button class="btn sm primary" data-act="go" data-section="voice">Talk to RAY</button>
+          <button class="btn sm" data-act="palette">Command</button>
+          <button class="btn sm ghost" data-act="go" data-section="assistant">Ask RAY</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>System overview</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="system">Details</button></div>
+        <div class="ring-grid">
+          ${ringTile({ label: 'CPU', percent: cpu, hint: `${system.cpu?.cores_logical ?? '—'} cores`, color: '#3ddcf5' })}
+          ${ringTile({ label: 'RAM', percent: memory, hint: `${bytes(system.memory?.used_bytes)} / ${bytes(system.memory?.total_bytes)}`, color: '#9b8cff' })}
+          ${ringTile({ label: 'Disk', percent: diskPercent, hint: `${bytes(system.disks?.[0]?.free_bytes)} free`, color: '#fbbf24' })}
+          ${ringTile({
+            label: 'Temp',
+            percent: tempPercent,
+            center: temp.known ? `${Math.round(temp.celsius)}°` : '—',
+            hint: temp.known ? (temp.label || 'sensor') : 'no sensor exposed',
+            color: '#f472b6',
+            unknown: !temp.known,
+          })}
+        </div>
+        <div class="stat-row" style="margin-top:12px;justify-content:space-between">
+          <div class="stat"><div class="n">${rate(system.network?.download_bps)}</div><div class="l">download</div></div>
+          <div class="stat"><div class="n">${rate(system.network?.upload_bps)}</div><div class="l">upload</div></div>
+          <div class="stat"><div class="n">${esc(system.uptime?.human || '—')}</div><div class="l">uptime</div></div>
+        </div>
+        <div class="faint tiny" style="margin-top:8px">${esc(system.identity?.hostname || 'this PC')} · ${esc(system.identity?.platform || '')} ${esc(system.identity?.release || '')}</div>
       </div>
     </section>
 
     <section class="grid cols-3">
-      <div class="card span-2">
+      <div class="card chat-card">
+        <div class="card-head"><h2>AI Assistant</h2><span class="spacer"></span>
+          <div class="chat-tabs" id="home-chat-tabs">
+            ${[['assistant', 'Chat'], ['research', 'Research'], ['system', 'Analyze']].map(([id, label]) => `
+              <button class="tab ${(state.homeChat?.agent || 'assistant') === id ? 'active' : ''}"
+                data-act="home-chat-tab" data-agent="${id}">${label}</button>`).join('')}
+          </div>
+        </div>
+        <div class="chat-log" id="home-chat-log"></div>
+        <form class="chat-form" id="home-chat-form">
+          <label class="field" style="flex:1;margin:0">
+            <input id="home-chat-input" type="text" autocomplete="off" spellcheck="false"
+              placeholder="${(state.homeChat?.agent === 'research') ? 'Research a topic with sources…' : (state.homeChat?.agent === 'system') ? 'Ask about this PC…' : 'Ask anything…'}" />
+          </label>
+          <button class="btn primary" type="submit" id="home-chat-send">Send</button>
+        </form>
+        <div class="faint tiny" style="margin-top:6px">${online ? 'Answers come from your configured provider.' : 'No provider configured yet — chat will say so instead of guessing.'}</div>
+      </div>
+
+      <div class="card">
         <div class="card-head"><h2>Today's schedule</h2><span class="spacer"></span>
           <button class="btn sm ghost" data-act="go" data-section="calendar">View calendar</button></div>
         ${scheduleList(data.schedule)}
         <div class="section-title" style="margin-top:14px">Reminders</div>
-        ${data.reminders.length ? data.reminders.map((item) => `
+        ${data.reminders.length ? data.reminders.slice(0, 4).map((item) => `
           <div class="list-item"><span class="pill info">${esc(timeLabel(item.due_at))}</span>
             <span class="grow"><span class="title">${esc(item.title)}</span></span>
             <button class="btn sm ghost" data-act="snooze" data-id="${item.id}">Snooze 10m</button></div>`).join('')
           : '<div class="empty">No reminders in the next 24 hours.</div>'}
       </div>
-      ${miniCalendar(month)}
-    </section>
 
-    <section class="grid cols-3">
-      <div class="card span-2">
-        <div class="card-head"><h2>Quick access</h2><span class="spacer"></span>
-          <span class="faint tiny">real actions, nothing simulated</span></div>
-        <div class="tile-grid">
-          <button class="tile" data-act="launch-app" data-target="calculator" title="Open the calculator">
-            <span class="tile-icon">${icon('calculator', 20)}</span>Calculator</button>
-          <button class="tile" data-act="launch-app" data-target="notepad" title="Open Notepad">
-            <span class="tile-icon violet">${icon('notepad', 20)}</span>Notepad</button>
-          <button class="tile" data-act="go" data-section="files" title="Browse and search files">
-            <span class="tile-icon amber">${icon('files', 20)}</span>File search</button>
-          <button class="tile" data-act="go" data-section="downloads" title="Open the Downloads view">
-            <span class="tile-icon green">${icon('downloads', 20)}</span>Downloads</button>
-          <button class="tile" data-act="screenshot" title="Capture the screen">
-            <span class="tile-icon pink">${icon('screenshot', 20)}</span>Screenshot</button>
-          <button class="tile" data-act="palette" title="Open the command center">
-            <span class="tile-icon">${icon('command', 20)}</span>Command</button>
+      <div class="card">
+        <div class="card-head"><h2>Quick tools</h2><span class="spacer"></span>
+          <span class="faint tiny">real actions</span></div>
+        <div class="quick-grid">
+          ${QUICK_TOOLS.map((tool) => `
+            <button class="quick ${tool.tone || ''}" data-act="${tool.act}"
+              ${tool.section ? `data-section="${tool.section}"` : ''}
+              ${tool.target ? `data-target="${tool.target}"` : ''}
+              ${tool.cmd ? `data-cmd="${esc(tool.cmd)}"` : ''}>
+              ${icon(tool.icon, 19)}<span>${esc(tool.label)}</span></button>`).join('')}
         </div>
-        <div class="section-title" style="margin-top:16px">Recent apps</div>
-        ${(data.recent_apps || []).length ? data.recent_apps.slice(0, 4).map((app) => `
+        <div class="mini-note" style="margin-top:12px">Screenshots, folder opens and power actions can ask for approval — that is the safety policy, not a failure.</div>
+        <div class="section-title" style="margin-top:14px">Recent apps</div>
+        ${(data.recent_apps || []).length ? data.recent_apps.slice(0, 3).map((app) => `
           <div class="list-item"><span class="grow"><span class="title">${esc(app.name)}</span>
             <div class="meta">${esc(relative(app.last_launched))}</div></span>
             <button class="btn sm ghost" data-act="launch-app" data-target="${esc(app.name)}">Open</button></div>`).join('')
-          : '<div class="empty">Apps you launch will appear here.</div>'}
+          : '<div class="empty">Apps you launch appear here.</div>'}
       </div>
-      ${providersCard()}
     </section>
 
     <section class="grid cols-3">
       <div class="card span-2">
-        <div class="card-head"><h2>File explorer</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="files">Open files</button></div>
-        <div class="tile-grid four">${folderTiles()}</div>
-        <div class="section-title" style="margin-top:16px">Recent files</div>
-        ${data.recent_files.length ? data.recent_files.slice(0, 4).map((file) => `
-          <div class="list-item"><span class="grow"><span class="title">${esc(file.name)}</span>
-            <div class="meta">${esc(file.size_human)} · ${esc(relative(file.modified))}</div></span>
-            <button class="btn sm ghost" data-act="open-file" data-path="${esc(file.path)}">Open</button></div>`).join('')
-          : '<div class="empty">No recent files in Downloads, Documents or Desktop.</div>'}
+        <div class="card-head"><h2>All features at your command</h2><span class="spacer"></span>
+          <span class="pill">${NAV.filter((item) => item.id && item.id !== 'search').length} sections</span>
+          <span class="faint tiny">every tile is live</span></div>
+        <div class="feature-grid">${featureGrid()}</div>
       </div>
+
       <div class="card">
-        <div class="card-head"><h2>System overview</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="system">Details</button></div>
-        <div class="row" style="gap:16px;align-items:center;margin-bottom:8px">
-          ${ringMarkup('memory', memory, memory > 88 ? '#fb7185' : '#9b8cff')}
+        <div class="card-head"><h2>Security &amp; privacy</h2><span class="spacer"></span>
+          <span class="pill ${policy.emergency_stop ? 'bad' : 'ok'}" id="scan-indicator">${policy.emergency_stop ? 'halted' : 'active'}</span></div>
+        <div class="row" style="gap:12px;align-items:center">
+          <span class="kpi-icon" style="width:46px;height:46px;border-radius:14px">${icon('security', 22)}</span>
           <div class="grow">
-            <div class="strong">${esc(system.identity?.hostname || 'this PC')}</div>
-            <div class="faint tiny">${esc(system.identity?.platform || '')} ${esc(system.identity?.release || '')}</div>
-            <div class="faint tiny">uptime ${esc(system.uptime?.human || '—')}</div>
+            <div class="strong">${esc(policy.mode || 'standard')} mode</div>
+            <div class="faint tiny">${pending} approval(s) waiting · ${num(auditTotal)} audited actions</div>
           </div>
         </div>
-        ${statRows(system)}
+        <div class="row wrap" style="margin-top:12px">
+          <button class="btn sm primary" data-act="security-scan">Run full check</button>
+          <button class="btn sm ghost" data-act="go" data-section="security">Open center</button>
+        </div>
+        <div class="scan-results" id="scan-results"></div>
       </div>
     </section>
 
     <section class="grid cols-3">
       <div class="card">
+        <div class="card-head"><h2>Automation &amp; agents</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="automation">Manage</button></div>
+        ${workflows.length ? workflows.slice(0, 4).map((workflow) => `
+          <div class="list-item">
+            <span class="grow"><span class="title">${esc(workflow.name)}</span>
+              <div class="meta">${esc(workflow.trigger?.type || 'manual')}${workflow.last_run ? ` · last run ${esc(relative(workflow.last_run))}` : ' · never run'}${
+                workflow.run_count ? ` · ${workflow.run_count} run(s)` : ''}</div></span>
+            <span class="pill ${workflow.enabled ? 'ok' : ''}">${workflow.enabled ? 'on' : 'off'}</span>
+          </div>`).join('') : '<div class="empty">No workflows yet.</div>'}
+        <div class="section-title" style="margin-top:14px">Agents</div>
+        <div class="row wrap">
+          ${agentList.slice(0, 5).map((agent) => `<span class="pill" title="${esc(agent.description || '')}">${esc(agent.title || agent.name)}</span>`).join('')}
+          <span class="pill info">${agentList.length} total</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Performance today</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="analytics">Analytics</button></div>
+        ${usageCard(analytics)}
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Recent files</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="files">All files</button></div>
+        ${data.recent_files.length ? data.recent_files.slice(0, 5).map((file) => `
+          <div class="list-item"><span class="grow"><span class="title">${esc(file.name)}</span>
+            <div class="meta">${esc(file.size_human)} · ${esc(relative(file.modified))}</div></span>
+            <button class="btn sm ghost" data-act="open-file" data-path="${esc(file.path)}">Open</button></div>`).join('')
+          : '<div class="empty">Nothing recent in Downloads, Documents or Desktop.</div>'}
+      </div>
+    </section>
+
+    <section class="grid cols-4">
+      <div class="card">
+        <div class="card-head"><h2>System actions</h2></div>
+        <div class="sys-actions">
+          <button class="sys-action" data-act="power" data-action="lock">${icon('lock', 20)}Lock</button>
+          <button class="sys-action" data-act="power" data-action="sleep">${icon('moon', 20)}Sleep</button>
+          <button class="sys-action danger" data-act="power" data-action="restart">${icon('restart', 20)}Restart</button>
+          <button class="sys-action danger" data-act="power" data-action="shutdown">${icon('power', 20)}Shut down</button>
+        </div>
+        <div class="mini-note" style="margin-top:10px">Restart and shutdown require explicit approval. Log out is not exposed by RAY yet.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Voice &amp; control</h2></div>
+        <div class="wave" aria-hidden="true">${'<i></i>'.repeat(16)}</div>
+        <div class="center faint tiny" style="margin-bottom:8px">${data.voice_enabled ? 'Voice replies enabled' : 'Voice output is off in Settings'}</div>
+        <button class="btn sm primary" data-act="go" data-section="voice" style="width:100%">${icon('mic', 16)} Talk to RAY</button>
+        <div class="mini-note center" style="margin-top:8px">Speech recognition runs in your browser; audio never leaves this PC.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Media</h2><span class="spacer"></span>
+          <span class="pill">${library.length} file(s)</span></div>
+        <div class="media-stats">
+          <div class="stat"><div class="n">${audioCount}</div><div class="l">audio</div></div>
+          <div class="stat"><div class="n">${videoCount}</div><div class="l">video</div></div>
+          <div class="stat"><div class="n">${(media.playlists || []).length}</div><div class="l">playlists</div></div>
+        </div>
+        ${library.length ? `<div class="list-item"><span class="grow"><span class="title">${esc(library[0].title || library[0].name)}</span>
+            <div class="meta">${esc(library[0].kind)} · ${esc(library[0].size_human)}</div></span>
+            <button class="btn sm ghost" data-act="play-media" data-query="${esc(library[0].title || library[0].name)}">Play</button></div>`
+          : '<div class="empty">No music or video folders found yet.</div>'}
+        <button class="btn sm ghost" data-act="go" data-section="media" style="width:100%;margin-top:8px">Open media center</button>
+        <div class="mini-note" style="margin-top:8px">Playback uses your default Windows player.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Browser</h2><span class="spacer"></span>
+          <button class="btn sm ghost" data-act="go" data-section="browser">Research</button></div>
+        <div class="browser-links">
+          ${BROWSER_LINKS.map((link) => `
+            <button class="browser-link" data-act="browser-open" data-url="${esc(link.url)}" title="Open ${esc(link.url)}">
+              <span class="dotletter">${link.letter}</span>${esc(link.label)}</button>`).join('')}
+        </div>
+        <form class="browser-form" id="browser-url-form">
+          <input type="text" id="browser-url" placeholder="https://…" autocomplete="off" spellcheck="false" />
+          <button class="btn sm" type="submit">Go</button>
+        </form>
+        <div class="mini-note" style="margin-top:8px">Links open in your default browser; RAY does not embed pages.</div>
+      </div>
+    </section>
+
+    <section class="grid cols-4">
+      <div class="card">
         <div class="card-head"><h2>Tasks</h2><span class="spacer"></span>
           <button class="btn sm ghost" data-act="go" data-section="tasks">All</button></div>
-        ${data.tasks.length ? data.tasks.slice(0, 5).map((task) => `
+        ${data.tasks.length ? data.tasks.slice(0, 4).map((task) => `
           <div class="list-item">
             <button class="btn sm ghost" data-act="complete-task" data-id="${task.id}" title="Mark done">✓</button>
             <span class="grow"><span class="title">${esc(task.title)}</span>
               <div class="meta">${esc(task.priority)}${task.due_at ? ` · ${esc(timeLabel(task.due_at))}` : ''}</div></span>
             ${task.overdue ? '<span class="pill bad">overdue</span>' : ''}
-          </div>`).join('') : '<div class="empty">Nothing overdue. Add a task when you are ready.</div>'}
+          </div>`).join('') : '<div class="empty">Nothing open. Add a task when you are ready.</div>'}
       </div>
+
       <div class="card">
         <div class="card-head"><h2>Notes</h2><span class="spacer"></span>
           <button class="btn sm ghost" data-act="go" data-section="notes">Open</button></div>
-        ${notes.notes.length ? notes.notes.slice(0, 5).map((note) => `
-          <button class="list-item" data-act="go" data-section="notes" style="width:100%">
+        ${notes.notes.length ? notes.notes.slice(0, 4).map((note) => `
+          <button class="list-item" data-act="go" data-section="notes">
             <span class="grow"><span class="title">${note.pinned ? '📌 ' : ''}${esc(note.title)}</span>
               <div class="meta">${esc(note.category)} · ${esc(relative(note.updated_at))}</div></span>
-          </button>`).join('') : '<div class="empty">No notes yet. Write your first one.</div>'}
+          </button>`).join('') : '<div class="empty">No notes yet.</div>'}
       </div>
+
+      ${miniCalendar(month)}
+
       <div class="card">
+        <div class="card-head"><h2>Shortcuts</h2></div>
+        <div class="shortcut-list">
+          <div class="shortcut"><span>Command center</span><span class="kbd">Ctrl Space</span></div>
+          <div class="shortcut"><span>Command center (alt)</span><span class="kbd">Ctrl K</span></div>
+          <div class="shortcut"><span>Close overlays</span><span class="kbd">Esc</span></div>
+          <div class="shortcut"><span>Send chat</span><span class="kbd">Enter</span></div>
+        </div>
+        <div class="mini-note" style="margin-top:10px">Windows shortcuts (Win+E, Alt+Tab) stay with the OS.</div>
+      </div>
+    </section>
+
+    <section class="grid cols-3">
+      <div class="card span-2">
         <div class="card-head"><h2>Notifications</h2><span class="spacer"></span>
           <span class="pill">${data.unread_notifications} unread</span></div>
         ${data.notifications.length ? data.notifications.slice(0, 4).map((item) => `
           <div class="list-item"><span class="grow"><span class="title">${esc(item.title)}</span>
             <div class="meta">${esc(item.body || '')}</div></span>
             <span class="faint tiny">${esc(relative(item.ts))}</span></div>`).join('')
-          : '<div class="empty">Reminders and automations report here.</div>'}
+          : '<div class="empty">Reminders, automations and scans report here.</div>'}
       </div>
-    </section>
-
-    <section class="grid cols-3">
-      <div class="card span-2">
-        <div class="card-head"><h2>Analytics</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="quick" data-cmd="Show my usage and performance">Ask RAY</button></div>
-        ${usageCard(analytics)}
-      </div>
-      ${securityCard(security)}
-    </section>
-
-    <section class="grid cols-3">
-      <div class="card span-2 quote">
-        <p>"A better tomorrow starts with what you do today."</p>
-        <div class="by">RAY · your local assistant</div>
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>Automation</h2><span class="spacer"></span>
-          <button class="btn sm ghost" data-act="go" data-section="automation">Manage</button></div>
-        ${(data.automation.recent_runs || []).slice(0, 3).map((run) => `
-          <div class="list-item"><span class="grow"><span class="title">${esc(run.trigger)} run</span>
-            <div class="meta">${esc(relative(run.started_at))}</div></span>
-            <span class="pill ${run.status === 'ok' ? 'ok' : 'warn'}">${esc(run.status)}</span></div>`).join('')
-          || '<div class="empty">No automation has run yet.</div>'}
+      <div class="card quote">
+        <p>"Discipline is choosing between what you want now and what you want most."</p>
+        <div class="by">RAY · today's reminder</div>
       </div>
     </section>`;
 
+  paintHomeChat();
   drawSparks();
+  updateStatusChips(system);
+
+  const form = $('#home-chat-form');
+  if (form) {
+    const input = $('#home-chat-input');
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      sendHomeChat(text);
+    });
+    input.focus();
+  }
+
+  const urlForm = $('#browser-url-form');
+  if (urlForm) {
+    const urlInput = $('#browser-url');
+    urlForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const url = urlInput.value.trim();
+      if (!url) return;
+      try {
+        await api('/api/browser/open', { method: 'POST', body: { url } });
+        toast('Opened in your browser', url, 'ok');
+      } catch (error) { toast('Could not open', error.message, 'error'); }
+    });
+  }
 
   const tick = () => {
     const node = $('#hero-time');
@@ -1046,18 +1279,7 @@ VIEWS.home = async function () {
       const next = await api('/api/system?history=1');
       const snapshot = next.snapshot;
       state.lastSystem = next;
-      const setRing = (id, value) => {
-        const node = $(`#ring-${id}`);
-        if (!node) return;
-        const circle = node.querySelector('circle.value');
-        if (circle) {
-          const circumference = 2 * Math.PI * 26;
-          circle.style.strokeDasharray = `${(circumference * clamp(value, 0, 100)) / 100} ${circumference}`;
-        }
-        const text = node.querySelector('.ring-value');
-        if (text) text.textContent = `${Math.round(value)}%`;
-      };
-      setRing('memory', snapshot.memory.percent);
+      updateStatusChips(snapshot);
     } catch (error) { /* transient */ }
   }, 8000);
 };
@@ -2803,6 +3025,46 @@ const ACTIONS = {
   palette: () => openPalette(),
   'key-help': () => openKeyHelp(),
   'cursor-help': () => openCursorHelp(),
+  'home-chat-tab': (dataset) => {
+    state.homeChat = state.homeChat || { messages: [] };
+    state.homeChat.agent = dataset.agent || 'assistant';
+    go('home');
+  },
+  'security-scan': async () => {
+    const box = $('#scan-results');
+    if (box) box.innerHTML = '<div class="scan-check"><span class="dot" style="background:var(--cyan)"></span><div class="grow">Running checks…</div></div>';
+    try {
+      const result = await api('/api/security/scan', { method: 'POST', body: {} });
+      const indicator = $('#scan-indicator');
+      const tone = !result.ok ? 'bad' : result.warnings ? 'warn' : 'ok';
+      if (indicator) {
+        indicator.className = `pill ${tone}`;
+        indicator.textContent = !result.ok
+          ? `${result.total - result.passed} issue(s)`
+          : result.warnings ? `${result.warnings} warning(s)` : 'all clear';
+      }
+      if (box) {
+        box.innerHTML = result.checks.map((check) => `
+          <div class="scan-check ${check.ok ? (check.warn ? 'warn' : '') : 'bad'}">
+            <span class="dot"></span>
+            <div class="grow"><div>${esc(check.name)}</div><div class="meta">${esc(check.detail)}</div></div>
+          </div>`).join('');
+      }
+      toast(
+        !result.ok ? 'Security check found issues' : result.warnings ? 'Check finished with warnings' : 'Security check passed',
+        `${result.passed}/${result.total} checks passed${result.warnings ? `, ${result.warnings} need review` : ''}`,
+        tone === 'ok' ? 'ok' : 'warn',
+        6000,
+      );
+    } catch (error) {
+      toast('Scan failed', error.message, 'error');
+      if (box) box.innerHTML = `<div class="scan-check bad"><span class="dot"></span><div class="grow">${esc(error.message)}</div></div>`;
+    }
+  },
+  'browser-open': (dataset) => api('/api/browser/open', { method: 'POST', body: { url: dataset.url } })
+    .then(() => toast('Opened in your browser', dataset.url, 'ok'))
+    .catch((error) => toast('Could not open', error.message, 'error')),
+
   'calendar-day': (dataset) => {
     const [year, month] = String(dataset.date).split('-').map(Number);
     state.calendarMonth = { year, month };

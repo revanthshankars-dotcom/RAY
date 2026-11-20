@@ -368,3 +368,16 @@ def test_cursor_credentials_are_allowed_without_a_key(client):
     saved = client.post("/api/credentials", {"name": "cursor", "value": "cur-optional-key"})
     assert saved["ok"] is True
     assert "cur-optional-key" not in json.dumps(saved)
+
+
+def test_security_scan_reports_real_checks(client, app):
+    before = app.audit.stats()["total"]
+    result = client.post("/api/security/scan", {})
+    assert result["ok"] is True
+    data = result["data"]
+    assert data["total"] >= 7
+    assert data["passed"] == data["total"]
+    assert data["ok"] is True
+    names = {check["name"] for check in data["checks"]}
+    assert {"Database integrity", "Configuration", "Credential vault", "Network exposure"} <= names
+    assert app.audit.stats()["total"] > before

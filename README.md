@@ -7,7 +7,15 @@ automation — through a validated command layer instead of pretending.
 
 - **Engine**: Python 3.10+, SQLite (WAL) + FTS5, standard library HTTP server.
 - **Interface**: its own window (PySide6/QtWebEngine) showing a local web UI
-  served at `127.0.0.1:8765`. No build step, no external assets, no CDN.
+  served at `127.0.0.1:8765`. No build step, no external assets, no CDN. The
+  Home screen is a command centre: greeting and day progress, a live RAY orb,
+  CPU/RAM/disk/temperature rings with network rate and uptime, an inline
+  assistant (Chat / Research / Analyse), today's schedule, quick tools, a
+  tile for every section, a real security scan, automation & agents, recent
+  files, a month calendar, system actions, voice, media, browser links and
+  notifications. A `Think · Plan · Automate · Execute` strip in the top bar
+  jumps to the matching section, and a floating dock keeps six sections one
+  click away.
 - **AI**: Cursor CLI for reasoning (Grok has been retired from the default
   routes), Gemini for knowledge/documents/images/tool planning, Fish Audio for
   speech. All optional and swappable — everything that does not need a model
@@ -215,14 +223,14 @@ ray/
   ui/          HTML/CSS/JS interface (no build step)
   desktop/     optional PySide6 window with tray icon
 scripts/       install.ps1, ui_smoke.mjs
-tests/         pytest suite (196 tests)
+tests/         pytest suite (197 tests)
 ```
 
 ## Testing
 
 ```bash
 pip install pytest
-python -m pytest                     # 196 tests, offline, no keys needed
+python -m pytest                     # 197 tests, offline, no keys needed
 ```
 
 The suite covers the database, credential vault, permission/approval flow,

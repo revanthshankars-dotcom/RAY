@@ -34,7 +34,7 @@ Everything below can be re-checked with the commands in **Verification**.
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 57 Python modules (~13.2k lines), 3 UI files (~3.7k lines), 196 tests,
+Counts: 57 Python modules (~13.2k lines), 3 UI files (~4.3k lines), 197 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -43,12 +43,12 @@ Counts: 57 Python modules (~13.2k lines), 3 UI files (~3.7k lines), 196 tests,
 
 ```
 $ python -m pytest
-196 passed in 21.5s
+197 passed in 22.0s
 ```
 
 | Test file | Tests | Focus |
 | --- | --- | --- |
-| `test_api.py` | 33 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
+| `test_api.py` | 34 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
 | `test_brain.py` | 33 | intent patterns, time parsing, plans, step caps, approvals, cancel, resume |
 | `test_ai.py` | 39 | Cursor CLI parsing/timeout/auth, Grok/Gemini/Fish parsing, tool calls, error mapping, routing fallback, budget, cache |
 | `test_memory_knowledge.py` | 19 | memory CRUD/export/prune/secrets, OOXML extraction, FTS search, excludes |

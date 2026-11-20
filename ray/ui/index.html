@@ -39,7 +39,16 @@
 
     <div class="main">
       <header class="topbar">
-        <h1 id="view-title">Home</h1>
+        <h1 id="view-title" hidden>Home</h1>
+        <div class="mode-strip" role="group" aria-label="RAY modes">
+          <button class="mode" data-act="go" data-section="assistant" title="Think — ask, reason and draft with RAY">Think</button>
+          <i aria-hidden="true">·</i>
+          <button class="mode" data-act="go" data-section="agents" title="Plan — inspect plans and agent runs">Plan</button>
+          <i aria-hidden="true">·</i>
+          <button class="mode" data-act="go" data-section="automation" title="Automate — workflows and schedules">Automate</button>
+          <i aria-hidden="true">·</i>
+          <button class="mode" data-act="go" data-section="tasks" title="Execute — commands, approvals and tasks">Execute</button>
+        </div>
         <button class="search-trigger" id="search-trigger" title="Open the command center (Ctrl+Space)">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
@@ -48,6 +57,16 @@
           <span class="kbd">Ctrl Space</span>
         </button>
         <div class="topbar-actions">
+          <div class="status-cluster">
+            <span class="status-chip" id="status-net" title="Network throughput">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 19h.01"/><path d="M8 15.5a6 6 0 0 1 8 0"/><path d="M4.5 12a11 11 0 0 1 15 0"/></svg>
+              <span id="status-net-label">—</span>
+            </span>
+            <span class="status-chip" id="status-battery" title="Battery">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="8" width="15" height="8" rx="2"/><path d="M20.5 10.5v3"/></svg>
+              <span id="status-battery-label">—</span>
+            </span>
+          </div>
           <div class="topbar-clock">
             <span class="time" id="topbar-time">--:--</span>
             <span class="date" id="topbar-date">—</span>
@@ -59,7 +78,7 @@
           <button class="icon-btn" id="btn-screenshot" title="Take a screenshot">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="13" rx="2.5"/><circle cx="12" cy="12.5" r="3.2"/><path d="M8 6l1.4-2h5.2L16 6"/></svg>
           </button>
-          <button class="icon-btn" id="btn-lock" title="Lock RAY / emergency stop">
+          <button class="icon-btn" id="btn-lock" title="Emergency stop">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/></svg>
           </button>
           <button class="icon-btn" id="btn-settings" title="Settings">

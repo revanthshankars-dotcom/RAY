@@ -785,6 +785,101 @@ def security(app, query=None, **_: Any) -> Any:
     }
 
 
+@route("POST", "/api/security/scan")
+def security_scan(app, **_: Any) -> Any:
+    """A real, local health check - every line is something we can verify."""
+    from datetime import datetime
+
+    checks: list[dict[str, Any]] = []
+
+    def check(name: str, ok: bool, detail: str, warn: bool = False) -> None:
+        checks.append({"name": name, "ok": bool(ok), "warn": bool(warn), "detail": detail})
+
+    try:
+        integrity, integrity_detail = app.db.integrity_check()
+    except Exception as exc:  # pragma: no cover - defensive
+        integrity, integrity_detail = False, str(exc)
+    check("Database integrity", integrity, integrity_detail or "ok")
+
+    problems = app.config.validate()
+    check("Configuration", not problems, "no problems" if not problems else "; ".join(problems[:3]))
+
+    policy = app.permissions.describe()
+    check(
+        "Safety policy",
+        True,
+        f"mode '{policy.get('mode', 'standard')}', shell "
+        f"{'allowed' if policy.get('allow_shell') else 'blocked'}, "
+        f"{policy.get('pending_approvals', 0)} pending approval(s)",
+    )
+    check(
+        "Emergency stop",
+        not policy.get("emergency_stop"),
+        "released" if not policy.get("emergency_stop") else "engaged - actions are halted",
+    )
+
+    try:
+        stored = [row for row in app.credentials.status() if row.get("configured")]
+        check(
+            "Credential vault",
+            True,
+            f"{len(stored)} secret(s) encrypted at rest" if stored else "no secrets stored yet",
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        check("Credential vault", False, str(exc))
+
+    exposed = bool(_CURRENT.get("exposed"))
+    allow_remote = str(os.environ.get("RAY_ALLOW_REMOTE_ORIGIN", "")).strip().lower() in ("1", "true", "yes", "on")
+    if not exposed:
+        check("Network exposure", True, "loopback only - not reachable from other machines")
+    elif allow_remote:
+        check(
+            "Network exposure",
+            True,
+            "reachable on your network because RAY_ALLOW_REMOTE_ORIGIN is set - the origin guard still blocks other sites",
+            warn=True,
+        )
+    else:
+        check(
+            "Network exposure",
+            False,
+            "reachable on your network without an opt-in - point ui.host back at 127.0.0.1",
+        )
+
+    stats = app.audit.stats()
+    check(
+        "Audit log",
+        True,
+        f"{stats.get('total', 0)} entries, {stats.get('failures', 0)} failed action(s)",
+    )
+    check("Protected folders", True, f"{len(app.files.protected_roots())} system folders guarded")
+
+    pending = app.permissions.pending()
+    check(
+        "Pending approvals",
+        True,
+        f"{len(pending)} waiting for your decision" if pending else "nothing waiting",
+    )
+
+    passed = sum(1 for item in checks if item["ok"])
+    warnings = sum(1 for item in checks if item["ok"] and item.get("warn"))
+    ok = passed == len(checks)
+    app.audit.record(
+        "security_scan",
+        target="local",
+        result="ok" if ok else "warn",
+        detail=f"{passed}/{len(checks)} checks passed",
+    )
+    return {
+        "ok": ok,
+        "passed": passed,
+        "total": len(checks),
+        "warnings": warnings,
+        "checks": checks,
+        "scanned_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 @route("POST", "/api/security/policy")
 def security_policy(app, body=None, **_: Any) -> Any:
     body = body or {}
