@@ -223,6 +223,17 @@ is reached:
 | `stop` (default) | refuses the request and tells you which engine and which cap was hit |
 | `switch` | moves to the next engine that still has credit, and logs the switch |
 
+The **Policy** select decides how the order is applied:
+
+| Policy | Behaviour |
+|---|---|
+| `Preference — follow my order` (default) | try the engines in the order you dragged them |
+| `Credits — most credit left first` | re-sort by remaining monthly credit before each request; your order breaks ties |
+| `Manual — only the pinned engine` | only the engine you pin answers, with no automatic fallback |
+
+The pill under the select shows what RAY would try *right now*, straight from the
+server's own decision — not a re-implementation in the interface.
+
 Example: OpenRouter `$5 / month`, 500 calls; Gemini `$0 / month`, 300 calls.
 Then drag `Gemini` above `OpenRouter` if you would rather spend Google's free
 tier first. Spend is counted locally from the amounts the providers report, so

@@ -609,6 +609,36 @@ const PROVIDERS = [
 const CHAT_ENGINES = ['openrouter', 'gemini'];
 const ENGINE_LABELS = { openrouter: 'OpenRouter', gemini: 'Gemini', fish: 'Fish Audio' };
 
+// The three policies, in the words a person needs to choose between them.
+const ENGINE_POLICIES = [
+  {
+    value: 'preference',
+    label: 'Preference — follow my order',
+    hint: 'RAY tries the engines in the order above, skipping any that cannot do the job, have no key, or are over their cap.',
+  },
+  {
+    value: 'credits',
+    label: 'Credits — most credit left first',
+    hint: 'RAY re-sorts by remaining monthly credit before each request, so the engine furthest from its cap goes first. Your order above breaks ties, and pinned still wins if set.',
+  },
+  {
+    value: 'manual',
+    label: 'Manual — only the pinned engine',
+    hint: 'Only the engine pinned below answers. No automatic fallback, even if it is over its cap or unreachable.',
+  },
+];
+
+function engineNowLine(engines) {
+  // The server computes this (`active`), so the UI never re-implements the rule.
+  const active = engines?.active || {};
+  const usable = (active.usable || []).map((name) => ENGINE_LABELS[name] || name);
+  if (usable.length) {
+    return `Now: ${usable.join(' → ')}${usable.length > 1 ? ` (${usable[0]} answers)` : ''}`;
+  }
+  if (active.halt) return `Now: nothing — ${active.halt.replace(/^No engine can take this request: /, '')}`;
+  return 'Now: no engine has a key yet';
+}
+
 function engineData() {
   return state.engines || null;
 }
@@ -672,7 +702,7 @@ function openEngineHelp() {
         </span></div>`).join('')}
     </div>
     <div class="faint tiny" style="margin-top:10px">
-      Policy: <span class="mono">${esc(engines?.policy || 'preference')}</span> ·
+      Policy: <span class="mono">${esc((ENGINE_POLICIES.find((item) => item.value === (engines?.policy)) || {}).label || engines?.policy || 'preference')}</span> ·
       when a cap is hit: <span class="mono">${esc(engines?.cap_behaviour || 'stop')}</span>.
       Caps are counted on this machine from real spend, so they hold even if a provider never warns you.
     </div>
@@ -941,6 +971,9 @@ VIEWS.home = async function () {
   ]);
   state.dashboard = data;
   if (engines) state.engines = engines;
+  // The user may have navigated while these ten requests were in flight; a
+  // slow view must never paint over the section they are looking at now.
+  if (state.section !== 'home') return;
 
   const system = live.snapshot || data.system || {};
   const history = live.history || [];
@@ -2737,6 +2770,7 @@ VIEWS.settings = async function () {
   ]);
   state.settings = settings;
   state.engines = engines;
+  if (state.section !== 'settings') return;
   const config = settings.config;
   const credentials = providers.credentials;
   view().innerHTML = `
@@ -2785,9 +2819,9 @@ VIEWS.settings = async function () {
           }).join('')}
         </div>
         <div class="form-row" style="margin-top:12px">
-          <label class="field"><span>Policy</span>
+          <label class="field grow"><span>Policy</span>
             <select id="engine-policy">
-              ${['preference', 'credits', 'manual'].map((value) => `<option value="${value}" ${engines?.policy === value ? 'selected' : ''}>${value}</option>`).join('')}
+              ${ENGINE_POLICIES.map((item) => `<option value="${item.value}" ${engines?.policy === item.value ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
             </select></label>
           <label class="field"><span>When a cap is hit</span>
             <select id="cap-behaviour">
@@ -2799,6 +2833,11 @@ VIEWS.settings = async function () {
               <option value="">none</option>
               ${CHAT_ENGINES.map((name) => `<option value="${name}" ${engines?.pinned === name ? 'selected' : ''}>${ENGINE_LABELS[name]}</option>`).join('')}
             </select></label>
+        </div>
+        <div class="faint tiny" id="policy-hint" style="margin-top:10px"></div>
+        <div class="row wrap" style="margin-top:8px">
+          <span class="pill info" id="engine-now">${esc(engineNowLine(engines))}</span>
+          <span class="faint tiny">from the saved settings — drag and press Save to change it</span>
         </div>
         <div class="row wrap" style="margin-top:10px">
           <button class="btn primary" id="save-engines">Save engine settings</button>
@@ -2962,6 +3001,17 @@ VIEWS.settings = async function () {
     };
 
     if (tab === 'ai') {
+      const policySelect = $('#engine-policy');
+      if (policySelect) {
+        const hint = $('#policy-hint');
+        const syncPolicy = () => {
+          const chosen = ENGINE_POLICIES.find((item) => item.value === policySelect.value);
+          if (hint && chosen) hint.textContent = chosen.hint;
+        };
+        policySelect.addEventListener('change', syncPolicy);
+        syncPolicy();
+      }
+
       // Drag-to-order + arrow buttons. The DOM order is the source of truth.
       const list = $('#engine-list');
       if (list) {
@@ -3018,9 +3068,16 @@ VIEWS.settings = async function () {
                 pinned: $('#pinned-engine').value,
               },
             });
-            toast('Engine settings saved', '', 'ok');
+            // Update in place instead of re-rendering: keeps the drag order,
+            // the focus, and the scroll position exactly where the user left them.
+            const now = $('#engine-now');
+            if (now) now.textContent = engineNowLine(state.engines);
+            for (const name of CHAT_ENGINES) {
+              const label = $(`#cap-label-${name}`);
+              if (label) label.textContent = capLabel(state.engines.credits?.[name]);
+            }
+            toast('Engine settings saved', `policy: ${state.engines.policy} · ${state.engines.cap_behaviour}`, 'ok');
             await refreshStatus();
-            await VIEWS.settings();
           } catch (error) { toast('Could not save engines', error.message, 'error'); }
         });
       }

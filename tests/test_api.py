@@ -419,3 +419,50 @@ def test_security_scan_reports_real_checks(client, app):
     names = {check["name"] for check in data["checks"]}
     assert {"Database integrity", "Configuration", "Credential vault", "Network exposure"} <= names
     assert app.audit.stats()["total"] > before
+
+
+def test_preference_policy_keeps_the_saved_order(client, app, monkeypatch):
+    from ray.ai.cache import UsageTracker
+
+    monkeypatch.setenv("RAY_OPENROUTER_API_KEY", "sk-or-test-key")
+    monkeypatch.setenv("RAY_GEMINI_API_KEY", "AIza-test-key")
+    app.router.rebuild()
+    UsageTracker(app.db).record("openrouter", "m", "chat", cost_usd=9.0)
+    client.patch("/api/ai/engines", {
+        "policy": "preference",
+        "order": ["openrouter", "gemini"],
+        "credits": {"openrouter": {"monthly_usd": 10}, "gemini": {"monthly_usd": 10}},
+    })
+    active = client.get("/api/ai/engines")["data"]["active"]
+    assert active["order"] == ["openrouter", "gemini"]
+    assert active["primary"] == "openrouter"
+
+
+def test_credits_policy_puts_the_engine_with_most_headroom_first(client, app, monkeypatch):
+    from ray.ai.cache import UsageTracker
+
+    monkeypatch.setenv("RAY_OPENROUTER_API_KEY", "sk-or-test-key")
+    monkeypatch.setenv("RAY_GEMINI_API_KEY", "AIza-test-key")
+    app.router.rebuild()
+    # OpenRouter is 90% through its cap, Gemini has not spent anything.
+    UsageTracker(app.db).record("openrouter", "m", "chat", cost_usd=9.0)
+    client.patch("/api/ai/engines", {
+        "policy": "credits",
+        "order": ["openrouter", "gemini"],
+        "credits": {"openrouter": {"monthly_usd": 10}, "gemini": {"monthly_usd": 10}},
+    })
+    data = client.get("/api/ai/engines")["data"]
+    assert data["policy"] == "credits"
+    assert data["active"]["order"] == ["gemini", "openrouter"]
+    assert data["active"]["primary"] == "gemini"
+    assert data["credits"]["openrouter"]["percent"] == 90.0
+
+
+def test_manual_policy_serves_only_the_pinned_engine(client, app, monkeypatch):
+    monkeypatch.setenv("RAY_OPENROUTER_API_KEY", "sk-or-test-key")
+    monkeypatch.setenv("RAY_GEMINI_API_KEY", "AIza-test-key")
+    app.router.rebuild()
+    client.patch("/api/ai/engines", {"policy": "manual", "pinned": "gemini"})
+    active = client.get("/api/ai/engines")["data"]["active"]
+    assert active["usable"] == ["gemini"]
+    assert active["order"][0] == "gemini"
