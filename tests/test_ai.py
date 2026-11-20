@@ -6,6 +6,8 @@ can be tested deterministically.
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -20,6 +22,7 @@ from ray.ai.base import (
     map_http_error,
 )
 from ray.ai.cache import ResponseCache
+from ray.ai.cursor import CursorProvider
 from ray.ai.fish import FishAudioProvider
 from ray.ai.gemini import GeminiProvider
 from ray.ai.grok import GrokProvider
@@ -216,6 +219,7 @@ class FakeProvider:
         self.text = text
         self.config = {"enabled": True}
         self.supports_documents = name == "gemini"
+        self.supports_tools = name in ("gemini", "grok")
 
     def availability(self):
         return True, "ready"
@@ -252,30 +256,47 @@ def _router_with(app, providers):
 
 
 def test_router_prefers_primary_provider(app):
-    grok = FakeProvider("grok")
+    cursor = FakeProvider("cursor")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"grok": grok, "gemini": gemini})
+    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
     result = router.chat("reasoning", [ChatMessage("user", "think")])
-    assert result.provider == "grok"
+    assert result.provider == "cursor"
     assert gemini.calls == 0
 
 
-def test_router_falls_back_on_failure(app):
-    grok = FakeProvider("grok", behaviour="auth")
+def test_router_routes_chat_to_cursor_and_planning_to_gemini(app):
+    router = _router_with(app, {"cursor": FakeProvider("cursor"), "gemini": FakeProvider("gemini")})
+    assert router.resolve_chain("chat")[0] == "cursor"
+    assert router.resolve_chain("planning")[0] == "gemini"
+    assert "grok" not in router.resolve_chain("chat")
+
+
+def test_router_skips_providers_without_tool_support(app):
+    cursor = FakeProvider("cursor")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"grok": grok, "gemini": gemini})
+    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
+    tools = [{"type": "function", "function": {"name": "list_files", "parameters": {}}}]
+    result = router.chat("planning", [ChatMessage("user", "list my files")], tools=tools)
+    assert result.provider == "gemini"
+    assert cursor.calls == 0
+
+
+def test_router_falls_back_on_failure(app):
+    cursor = FakeProvider("cursor", behaviour="auth")
+    gemini = FakeProvider("gemini")
+    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
     result = router.chat("reasoning", [ChatMessage("user", "think")])
     assert result.provider == "gemini"
     assert gemini.calls == 1
 
 
 def test_router_raises_when_all_providers_fail(app):
-    grok = FakeProvider("grok", behaviour="quota")
+    cursor = FakeProvider("cursor", behaviour="quota")
     gemini = FakeProvider("gemini", behaviour="timeout")
-    router = _router_with(app, {"grok": grok, "gemini": gemini})
+    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
     with pytest.raises(ProviderUnavailable) as excinfo:
         router.chat("reasoning", [ChatMessage("user", "x")])
-    assert "grok" in str(excinfo.value) or "provider" in str(excinfo.value).lower()
+    assert "cursor" in str(excinfo.value) or "provider" in str(excinfo.value).lower()
 
 
 def test_router_offline_message_mentions_settings(app):
@@ -287,32 +308,32 @@ def test_router_offline_message_mentions_settings(app):
 
 
 def test_router_caches_identical_prompts(app):
-    grok = FakeProvider("grok", text="cached answer")
-    router = _router_with(app, {"grok": grok})
+    gemini = FakeProvider("gemini", text="cached answer")
+    router = _router_with(app, {"gemini": gemini})
     first = router.chat("summarize", [ChatMessage("user", "same")], use_cache=True)
     second = router.chat("summarize", [ChatMessage("user", "same")], use_cache=True)
     assert first.text == "cached answer"
     assert second.cached is True
-    assert grok.calls == 1
+    assert gemini.calls == 1
 
 
 def test_router_budget_blocks_provider(app):
-    app.config.set("ai.daily_budget.grok", 1, save=False)
-    grok = FakeProvider("grok")
+    app.config.set("ai.daily_budget.cursor", 1, save=False)
+    cursor = FakeProvider("cursor")
     gemini = FakeProvider("gemini")
-    router = _router_with(app, {"grok": grok, "gemini": gemini})
+    router = _router_with(app, {"cursor": cursor, "gemini": gemini})
     router.chat("reasoning", [ChatMessage("user", "one")])
     result = router.chat("reasoning", [ChatMessage("user", "two")])
     assert result.provider == "gemini"
 
 
 def test_router_records_usage(app):
-    grok = FakeProvider("grok")
-    router = _router_with(app, {"grok": grok})
+    cursor = FakeProvider("cursor")
+    router = _router_with(app, {"cursor": cursor})
     router.chat("chat", [ChatMessage("user", "hi")])
     usage = router.usage.today()
     assert usage["totals"]["calls"] >= 1
-    assert router.usage.calls_today("grok") >= 1
+    assert router.usage.calls_today("cursor") >= 1
 
 
 def test_cache_expiry(app):
@@ -332,3 +353,126 @@ def test_http_timeout_maps_to_provider_timeout():
     response = httpx.Response(500, json={"error": "boom"})
     error = map_http_error("gemini", response)
     assert "service error" in error.message.lower()
+
+
+# --------------------------------------------------------------- cursor (CLI)
+def _fake_cli(tmp_path, body: str) -> str:
+    script = tmp_path / "cursor-agent"
+    script.write_text("#!/usr/bin/env python3\n" + body)
+    script.chmod(0o755)
+    return str(script)
+
+
+def cursor_config(binary: str, **overrides):
+    config = {"enabled": True, "binary": binary, "timeout": 10, "output_format": "text"}
+    config.update(overrides)
+    return config
+
+
+def test_cursor_reports_a_missing_cli(monkeypatch):
+    monkeypatch.setattr("ray.ai.cursor.shutil.which", lambda name: None)
+    provider = CursorProvider({"enabled": True, "binary": "/definitely/not/here"})
+    available, detail = provider.availability()
+    assert available is False
+    assert "Cursor CLI not found" in detail
+    assert provider.configured is False
+    with pytest.raises(ProviderUnavailable):
+        provider.chat([ChatMessage("user", "hi")])
+
+
+def test_cursor_chat_runs_read_only_print_mode(tmp_path, monkeypatch):
+    log = tmp_path / "args.json"
+    cli = _fake_cli(
+        tmp_path,
+        "import json, os, sys\n"
+        "open(os.environ['FAKE_ARGS'], 'w').write(json.dumps(sys.argv[1:]))\n"
+        "print('Hello from Cursor.')\n",
+    )
+    monkeypatch.setenv("FAKE_ARGS", str(log))
+    provider = CursorProvider(cursor_config(cli))
+    result = provider.chat([ChatMessage("user", "hi there")], system="Be brief.")
+
+    args = json.loads(log.read_text())
+    assert "--print" in args
+    assert args[args.index("--mode") + 1] == "ask"
+    assert "--force" not in args and "--yolo" not in args
+    assert "--output-format" in args and "text" in args
+    prompt = args[-1]
+    assert "System instructions" in prompt and "User: hi there" in prompt
+    assert result.text == "Hello from Cursor."
+    assert result.provider == "cursor"
+
+
+def test_cursor_passes_the_optional_api_key(tmp_path, monkeypatch):
+    seen = tmp_path / "env.txt"
+    cli = _fake_cli(
+        tmp_path,
+        "import os\n"
+        "open(os.environ['FAKE_ENV'], 'w').write(os.environ.get('CURSOR_API_KEY', ''))\n"
+        "print('ok')\n",
+    )
+    monkeypatch.setenv("FAKE_ENV", str(seen))
+    provider = CursorProvider(cursor_config(cli), "cur-test-key")
+    provider.chat([ChatMessage("user", "hi")])
+    assert seen.read_text() == "cur-test-key"
+
+
+def test_cursor_auth_failure_is_explained(tmp_path):
+    cli = _fake_cli(tmp_path, "import sys\nsys.stderr.write('Not logged in. Run cursor-agent login')\nsys.exit(1)\n")
+    provider = CursorProvider(cursor_config(cli))
+    with pytest.raises(ProviderAuthError) as excinfo:
+        provider.chat([ChatMessage("user", "hi")])
+    assert "login" in str(excinfo.value).lower()
+
+
+def test_cursor_timeout_is_reported(tmp_path):
+    cli = _fake_cli(tmp_path, "import time\ntime.sleep(10)\n")
+    provider = CursorProvider(cursor_config(cli, timeout=1))
+    with pytest.raises(ProviderTimeout):
+        provider.chat([ChatMessage("user", "hi")])
+
+
+def test_cursor_test_connection_detects_sign_in(tmp_path):
+    cli = _fake_cli(
+        tmp_path,
+        "import sys\n"
+        "if '--version' in sys.argv:\n"
+        "    print('cursor-agent 2026.10.1'); raise SystemExit(0)\n"
+        "print('Logged in as revanth'); raise SystemExit(0)\n",
+    )
+    status = CursorProvider(cursor_config(cli)).test_connection()
+    assert status.available is True
+    assert "cursor-agent 2026.10.1" in status.detail
+
+
+def test_cursor_test_connection_detects_signed_out(tmp_path):
+    cli = _fake_cli(
+        tmp_path,
+        "import sys\n"
+        "if '--version' in sys.argv:\n"
+        "    print('cursor-agent 2026.10.1'); raise SystemExit(0)\n"
+        "print('Not logged in'); raise SystemExit(1)\n",
+    )
+    status = CursorProvider(cursor_config(cli)).test_connection()
+    assert status.available is False
+    assert "not signed in" in status.detail
+
+
+def test_cursor_strips_ansi_and_parses_json_output(tmp_path):
+    cli = _fake_cli(
+        tmp_path,
+        "import json\n"
+        "print('\\x1b[32m' + json.dumps({'type': 'result', 'result': 'JSON answer'}) + '\\x1b[0m')\n",
+    )
+    provider = CursorProvider(cursor_config(cli, output_format="json"))
+    result = provider.chat([ChatMessage("user", "hi")])
+    assert result.text == "JSON answer"
+
+
+def test_cursor_describe_marks_cli_presence(tmp_path):
+    cli = _fake_cli(tmp_path, "print('ok')\n")
+    described = CursorProvider(cursor_config(cli)).describe()
+    assert described["name"] == "cursor"
+    assert described["configured"] is True
+    assert described["supports_tools"] is False
+    assert described["binary"] == cli

@@ -228,3 +228,35 @@ def test_plan_limits_steps(app):
     limit = int(app.config.get("brain.max_steps", 8))
     assert len(plan.steps) <= limit
     assert "step limit" in plan.notes
+
+
+def test_conversational_fallback_uses_chat_provider_when_planning_fails(app, monkeypatch):
+    from ray.brain.planner import Plan
+
+    monkeypatch.setattr(
+        app.planner,
+        "plan",
+        lambda *args, **kwargs: Plan(goal="hi", agent="assistant", source="offline", answer="offline notice"),
+    )
+    monkeypatch.setattr(app.orchestrator, "_chat_result", lambda *args, **kwargs: "Cursor says hello.")
+    result = app.orchestrator.handle("tell me a joke")
+    assert result.status == "answered"
+    assert result.answer.startswith("Cursor says hello.")
+    assert "without tools" in result.answer
+
+
+def test_conversational_fallback_keeps_offline_notice_when_chat_fails(app, monkeypatch):
+    from ray.ai.base import ProviderUnavailable
+    from ray.brain.planner import Plan
+
+    monkeypatch.setattr(
+        app.planner,
+        "plan",
+        lambda *args, **kwargs: Plan(goal="hi", agent="assistant", source="offline", answer="offline notice"),
+    )
+
+    def explode(*args, **kwargs):
+        raise ProviderUnavailable("no providers")
+
+    monkeypatch.setattr(app.orchestrator, "_chat_result", explode)
+    assert app.orchestrator.handle("tell me a joke").answer == "offline notice"

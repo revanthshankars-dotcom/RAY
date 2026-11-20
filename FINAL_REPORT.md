@@ -20,21 +20,21 @@ Everything below can be re-checked with the commands in **Verification**.
 | Encrypted credential vault (Fernet, mode 0600, env fallback, rotation) | **Complete, tested** | `tests/test_security.py` |
 | Permission levels, approval queue, emergency stop, audit log | **Complete, tested** | 14 security tests + API approval round-trip |
 | 80-tool validated command layer | **Complete, tested** | tool catalogue test, approval tests, capability probes |
-| Grok + Gemini + Fish Audio providers, routing, retries, budgets, cache, usage | **Complete; request/response tested with injected HTTP** | `tests/test_ai.py` (23) |
-| Intent parser + planner + orchestrator (progress, cancel, resume, step limits) | **Complete, tested** | `tests/test_brain.py` (31) |
+| Cursor CLI + Gemini + Grok (opt-in) + Fish Audio providers, routing, retries, budgets, cache, usage | **Complete; request/response tested with injected HTTP and a stub CLI** | `tests/test_ai.py` |
+| Intent parser + planner + orchestrator (progress, cancel, resume, step limits, conversational fallback) | **Complete, tested** | `tests/test_brain.py` (33) |
 | 12 agents with tool remits, run log | **Complete, tested** | agent selection + `agent_runs` assertions |
 | Files: browse/search/open/rename/copy/move, quarantine+restore, verified zip backups, duplicates, organiser | **Complete, tested** | `tests/test_computer.py` |
 | Productivity: tasks, notes, reminders, calendar, focus sessions, habits | **Complete, tested** | `tests/test_productivity.py` (14) |
 | Automation: 5 trigger types, conditions, 4 step types, history, safety refusals, scheduler | **Complete, tested** | `tests/test_automation.py` (15) |
 | Knowledge: extraction (PDF/DOCX/XLSX/PPTX/TXT/MD/CSV), FTS5 index, watch folders, local summaries | **Complete, tested** | `tests/test_memory_knowledge.py` (19) |
 | Long-term memory with user control (list/forget/export/import/prune, secret refusal) | **Complete, tested** | memory tests |
-| Local HTTP API (~60 routes) | **Complete, tested** | `tests/test_api.py` (30) |
+| Local HTTP API (~60 routes) | **Complete, tested** | `tests/test_api.py` (33) |
 | Interface: 21 sections, command center, chat, voice, palette, modals, toasts, live charts | **Complete; rendered headlessly in every section** | `scripts/ui_smoke.mjs` output below |
 | Desktop window (PySide6 + QtWebEngine, tray, Ctrl+Space, menu) | **Written; not runnable here** | no `libGL.so.1` in this sandbox |
 | System monitor with real metrics | **Complete, tested** | CPU/memory/disk/process assertions |
 | Media centre, browser/research, downloads | **Implemented; partially tested** | library scan test; research needs network |
 
-Counts: 56 Python modules (~12.6k lines), 3 UI files (~3.1k lines), 179 tests,
+Counts: 57 Python modules (~13.2k lines), 3 UI files (~3.7k lines), 196 tests,
 80 tools, 12 agents, 21 navigation sections.
 
 ---
@@ -43,14 +43,14 @@ Counts: 56 Python modules (~12.6k lines), 3 UI files (~3.1k lines), 179 tests,
 
 ```
 $ python -m pytest
-179 passed in 19.8s
+196 passed in 21.5s
 ```
 
 | Test file | Tests | Focus |
 | --- | --- | --- |
-| `test_api.py` | 31 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
-| `test_brain.py` | 31 | intent patterns, time parsing, plans, step caps, approvals, cancel, resume |
-| `test_ai.py` | 23 | Grok/Gemini/Fish parsing, tool calls, error mapping, routing fallback, budget, cache |
+| `test_api.py` | 33 | every major endpoint, approval resume, CSRF/content-type guards, static files, path traversal, log redaction |
+| `test_brain.py` | 33 | intent patterns, time parsing, plans, step caps, approvals, cancel, resume |
+| `test_ai.py` | 39 | Cursor CLI parsing/timeout/auth, Grok/Gemini/Fish parsing, tool calls, error mapping, routing fallback, budget, cache |
 | `test_memory_knowledge.py` | 19 | memory CRUD/export/prune/secrets, OOXML extraction, FTS search, excludes |
 | `test_computer.py` | 18 | files (quarantine round-trip, backups, protected paths), metrics, shell safety |
 | `test_automation.py` | 15 | triggers, conditions, destructive refusal, history, scheduler |
@@ -117,7 +117,7 @@ Windows machine:
 | Keyboard/mouse automation | no `pynput` | approve a `press_hotkey` call |
 | App launching/closing | sandbox has no Windows app model | "open notepad" |
 | Power actions (lock/sleep/shutdown) | intentionally guarded; not executed here | approve a `power_off` call |
-| Real Grok/Gemini/Fish calls | no API keys, and provider hosts are not reachable from this sandbox | Settings → Test each provider |
+| Real Cursor/Gemini/Fish calls | the Cursor CLI is not installed here, there are no API keys, and provider hosts are unreachable from this sandbox | Settings → Test each provider on your PC |
 | Fish Audio sounds like your voice | needs your key/voice id | Voice → Load voices → Speak |
 | Research over the live web | outbound internet restricted here | Browser → Research |
 | Offline speech-to-text | `faster-whisper` not installed (large download) | Install it, or use browser speech recognition |
@@ -173,7 +173,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -WithDesktop -WithA
 
 or double-click `RAY.bat`. The interface opens at `http://127.0.0.1:8765/`.
 
-1. **Settings → AI providers** — paste your Grok key (`console.x.ai`), Gemini key
+1. **Settings → AI providers** — install the Cursor CLI (`cursor.com/cli`, `cursor-agent login`) or paste a Gemini key
    (`aistudio.google.com/apikey`), Fish Audio key (`fish.audio`). Press **Test**
    for each; the result is a real API probe, not a placeholder.
 2. Optional: Fish Audio voice id (`reference_id`), then **Voice → Load voices**.

@@ -4,8 +4,9 @@ Not every request goes to every provider.  RAY classifies the work, picks the
 best engine for it, falls back only when that engine is unavailable, and
 records what happened.
 
-    reasoning / planning / chat / code  -> Grok first, Gemini fallback
-    documents / images / long analysis  -> Gemini first, Grok fallback
+    chat / reasoning / code             -> Cursor CLI first, Gemini fallback
+    planning / tool selection           -> Gemini first (native tool calls)
+    documents / images / long analysis  -> Gemini first, Cursor fallback
     speech                              -> Fish Audio only
 
 All failures surface as ``ProviderError`` subclasses with a message a human can
@@ -33,6 +34,7 @@ from .base import (
     ProviderUnavailable,
 )
 from .cache import ResponseCache, UsageTracker
+from .cursor import CursorProvider
 from .fish import FishAudioProvider
 from .gemini import GeminiProvider
 from .grok import GrokProvider
@@ -40,24 +42,28 @@ from .grok import GrokProvider
 log = get_logger("ai.router")
 
 TASK_ROUTES: dict[str, list[str]] = {
-    "chat": ["grok", "gemini"],
-    "reasoning": ["grok", "gemini"],
-    "planning": ["grok", "gemini"],
-    "tool_selection": ["grok", "gemini"],
-    "code": ["grok", "gemini"],
-    "document": ["gemini", "grok"],
+    "chat": ["cursor", "gemini"],
+    "reasoning": ["cursor", "gemini"],
+    "code": ["cursor", "gemini"],
+    # the planner needs native function calling, which the CLI cannot provide
+    "planning": ["gemini", "cursor"],
+    "tool_selection": ["gemini", "cursor"],
+    "document": ["gemini", "cursor"],
     "document_long": ["gemini"],
     "image": ["gemini"],
-    "summarize": ["gemini", "grok"],
-    "research": ["gemini", "grok"],
+    "summarize": ["gemini", "cursor"],
+    "research": ["gemini", "cursor"],
     "tts": ["fish"],
 }
 
 PROVIDER_CLASSES = {
+    "cursor": CursorProvider,
     "grok": GrokProvider,
     "gemini": GeminiProvider,
     "fish": FishAudioProvider,
 }
+
+DEFAULT_CHAIN = ["cursor", "gemini"]
 
 HEALTH_TTL_SECONDS = 45
 
@@ -150,10 +156,10 @@ class ProviderRouter:
     # ------------------------------------------------------------------- chat
     def resolve_chain(self, kind: str, preferred: str | None = None) -> list[str]:
         if preferred:
-            chain = [preferred] + [p for p in TASK_ROUTES.get(kind, ["grok", "gemini"]) if p != preferred]
+            chain = [preferred] + [p for p in TASK_ROUTES.get(kind, DEFAULT_CHAIN) if p != preferred]
         else:
-            chain = list(TASK_ROUTES.get(kind, ["grok", "gemini"]))
-        default = str(self.config.get("ai.default_provider", "grok") or "grok")
+            chain = list(TASK_ROUTES.get(kind, DEFAULT_CHAIN))
+        default = str(self.config.get("ai.default_provider", "cursor") or "cursor")
         if default not in chain and default != "fish":
             chain.append(default)
         return chain
@@ -199,6 +205,9 @@ class ProviderRouter:
             supports_files = getattr(engine, "supports_documents", False)
             if inline_files and not supports_files:
                 errors.append(f"{name}: cannot read inline documents")
+                continue
+            if tools and not getattr(engine, "supports_tools", False):
+                errors.append(f"{name}: cannot call RAY tools")
                 continue
             try:
                 result = engine.chat(
@@ -246,9 +255,9 @@ class ProviderRouter:
         message = "No AI provider could handle this request. " + " | ".join(errors[:4])
         if not self.available_providers():
             message = (
-                "No AI provider is configured yet. Add a Grok, Gemini or Fish Audio key in "
-                "Settings > AI Providers. Local features (files, tasks, notes, system monitor, "
-                "automation) keep working offline."
+                "No AI provider is configured yet. Install the Cursor CLI (cursor.com/cli) or add a "
+                "Gemini, Grok or Fish Audio key in Settings > AI Providers. Local features (files, "
+                "tasks, notes, system monitor, automation) keep working offline."
             )
         raise ProviderUnavailable(message)
 

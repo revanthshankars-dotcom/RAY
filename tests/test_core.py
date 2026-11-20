@@ -114,3 +114,18 @@ def test_table_counts_and_integrity(app):
     assert counts["tasks"] == 0
     assert app.db.integrity_check()[0] is True
     assert app.db.size_bytes() > 0
+
+
+def test_config_migrates_the_old_grok_default(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"ai": {"default_provider": "grok"}}), encoding="utf-8")
+    config = Config(path)
+    assert config.get("ai.default_provider") == "cursor"
+    assert config.get("ai.routing_version") == 2
+    assert json.loads(path.read_text(encoding="utf-8"))["ai"]["default_provider"] == "cursor"
+
+
+def test_config_keeps_an_explicit_non_grok_default(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"ai": {"default_provider": "gemini"}}), encoding="utf-8")
+    assert Config(path).get("ai.default_provider") == "gemini"

@@ -8,6 +8,7 @@ HTTP API.
 Environment variables are honoured as a fallback (useful for CI and for people
 who prefer to keep secrets out of the database entirely):
 
+    RAY_CURSOR_API_KEY / CURSOR_API_KEY  cursor (optional; the CLI can log in instead)
     RAY_GROK_API_KEY / XAI_API_KEY       grok
     RAY_GEMINI_API_KEY / GEMINI_API_KEY  gemini
     RAY_FISH_API_KEY / FISH_AUDIO_API_KEY fish
@@ -27,9 +28,10 @@ from ..core.logging_setup import get_logger
 
 log = get_logger("security.credentials")
 
-PROVIDERS = ("grok", "gemini", "fish")
+PROVIDERS = ("cursor", "grok", "gemini", "fish")
 
 ENV_NAMES: dict[str, tuple[str, ...]] = {
+    "cursor": ("RAY_CURSOR_API_KEY", "CURSOR_API_KEY"),
     "grok": ("RAY_GROK_API_KEY", "XAI_API_KEY", "GROK_API_KEY"),
     "gemini": ("RAY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "fish": ("RAY_FISH_API_KEY", "FISH_AUDIO_API_KEY", "FISH_API_KEY"),

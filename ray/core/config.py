@@ -48,14 +48,24 @@ DEFAULTS: dict[str, Any] = {
         ],
     },
     "ai": {
-        "default_provider": "grok",
+        "default_provider": "cursor",
+        "routing_version": 2,
         "stream": False,
         "cache_ttl_seconds": 1800,
         "request_timeout_seconds": 60,
         "max_retries": 2,
         "allow_cloud_documents": False,
-        "daily_budget": {"grok": 300, "gemini": 400, "fish": 300},
+        "daily_budget": {"cursor": 300, "grok": 300, "gemini": 400, "fish": 300},
         "providers": {
+            "cursor": {
+                "enabled": True,
+                "binary": "",
+                "workspace": "",
+                "model": "",
+                "timeout": 180,
+                "output_format": "text",
+                "extra_args": [],
+            },
             "grok": {
                 "enabled": True,
                 "model": "grok-4",
@@ -150,6 +160,10 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+# Providers whose model may stay blank (the account or CLI decides).
+MODEL_OPTIONAL_PROVIDERS = {"cursor"}
+
+
 class Config:
     """Thread-safe JSON settings store with change notification."""
 
@@ -178,9 +192,30 @@ class Config:
             except OSError:
                 pass
             return self._data
+        stored = raw if isinstance(raw, dict) else {}
         with self._lock:
-            self._data = _deep_merge(DEFAULTS, raw if isinstance(raw, dict) else {})
+            self._data = _deep_merge(DEFAULTS, stored)
+            migrated = self._migrate(stored)
+        if migrated:
+            try:
+                self.save()
+            except OSError:  # a read-only config must not stop the app
+                pass
         return self._data
+
+    def _migrate(self, stored: dict[str, Any]) -> bool:
+        """One-off upgrades so existing installs pick up better defaults."""
+        ai = self._data.setdefault("ai", {})
+        saved = stored.get("ai") if isinstance(stored.get("ai"), dict) else {}
+        version = int(saved.get("routing_version", 1) or 1)
+        changed = False
+        if version < 2:
+            if str(saved.get("default_provider", "")) == "grok":
+                # Grok used to be the primary engine; Cursor replaced it.
+                ai["default_provider"] = "cursor"
+            ai["routing_version"] = 2
+            changed = True
+        return changed
 
     def save(self) -> None:
         if not self.path:
@@ -262,7 +297,7 @@ class Config:
             if not isinstance(provider, dict):
                 problems.append(f"ai.providers.{name} must be an object")
                 continue
-            if not str(provider.get("model", "")).strip():
+            if name not in MODEL_OPTIONAL_PROVIDERS and not str(provider.get("model", "")).strip():
                 problems.append(f"ai.providers.{name}.model must not be empty")
             base = str(provider.get("base_url", ""))
             if base and not base.startswith("http"):

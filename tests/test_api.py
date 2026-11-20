@@ -345,3 +345,26 @@ def test_response_headers_are_locked_down(server):
         assert headers["Access-Control-Allow-Origin" if "Access-Control-Allow-Origin" in headers else "X-Content-Type-Options"] == "nosniff"
         assert "default-src 'self'" in headers["Content-Security-Policy"]
         assert headers["Referrer-Policy"] == "no-referrer"
+
+
+def test_cursor_provider_endpoint_explains_setup(client):
+    info = client.get("/api/providers/cursor")["data"]
+    assert info["name"] == "cursor"
+    assert "cursor-agent login" in info["install"]["login"]
+    assert "--mode ask" not in info  # documentation lives in the UI, not the payload
+    if not info["binary"]:
+        assert info["available"] is False
+        assert "Cursor CLI not found" in info["detail"]
+        assert info["authenticated"] is False
+    saved = client.post("/api/providers/cursor", {"model": "sonnet-4", "workspace": ""})
+    assert saved["data"]["saved"] is True
+    assert client.get("/api/providers/cursor")["data"]["model"] == "sonnet-4"
+
+
+def test_cursor_credentials_are_allowed_without_a_key(client):
+    listed = client.get("/api/providers")["data"]["credentials"]
+    cursor = next(item for item in listed if item["name"] == "cursor")
+    assert cursor["configured"] is False
+    saved = client.post("/api/credentials", {"name": "cursor", "value": "cur-optional-key"})
+    assert saved["ok"] is True
+    assert "cur-optional-key" not in json.dumps(saved)

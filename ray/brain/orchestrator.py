@@ -148,7 +148,22 @@ class Orchestrator:
             self.bus.publish("task_started", task_id=task_id, text=text, agent=spec.name, steps=len(plan.steps))
 
             if not plan.steps:
-                result.answer = plan.answer or self.chat(text, history=history, agent=spec.name)
+                if plan.answer and plan.source != "offline":
+                    result.answer = plan.answer
+                else:
+                    # Planning failed (for example: no tool-capable provider is
+                    # configured).  A conversational provider can still answer,
+                    # so try it before falling back to the offline notice.
+                    try:
+                        reply = self._chat_result(text, history=history, agent=spec.name)
+                        result.answer = reply + (
+                            "\n\nNote: I answered without tools. Tool actions (files, apps, "
+                            "automation) need a tool-capable model - Gemini with a key is the "
+                            "default planner."
+                            if plan.source == "offline" else ""
+                        )
+                    except ProviderError:
+                        result.answer = plan.answer or self.chat(text, history=history, agent=spec.name)
                 result.status = "answered"
                 result.speak = plan.speak or _first_sentence(result.answer)
                 return self._finish(result)
@@ -296,6 +311,18 @@ class Orchestrator:
         return True
 
     def chat(self, text: str, history: list[dict[str, str]] | None = None, agent: str = "assistant") -> str:
+        try:
+            return self._chat_result(text, history=history, agent=agent)
+        except ProviderError as exc:
+            return (
+                f"I could not reach an AI provider: {exc.message}\n\n"
+                "Local commands still work - try \"open my documents folder\", \"check my system\", "
+                "or \"remind me to stretch at 4pm\"."
+            )
+
+    def _chat_result(
+        self, text: str, history: list[dict[str, str]] | None = None, agent: str = "assistant"
+    ) -> str:
         spec = self.agents.get(agent)
         context = ""
         if self.memory is not None:
@@ -315,15 +342,8 @@ class Orchestrator:
             if item.get("role") in ("user", "assistant")
         ]
         messages.append(ChatMessage("user", text))
-        try:
-            result = self.router.chat("chat", messages, system=system, temperature=0.6, max_tokens=900)
-            return result.text or "(the model returned an empty reply)"
-        except ProviderError as exc:
-            return (
-                f"I could not reach an AI provider: {exc.message}\n\n"
-                "Local commands still work - try \"open my documents folder\", \"check my system\", "
-                "or \"remind me to stretch at 4pm\"."
-            )
+        result = self.router.chat("chat", messages, system=system, temperature=0.6, max_tokens=900)
+        return result.text or "(the model returned an empty reply)"
 
     # -------------------------------------------------------------- internals
     def _finish(self, result: TaskResult) -> TaskResult:

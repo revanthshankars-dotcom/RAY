@@ -23,7 +23,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     target = tmp_path / "ray-home"
     target.mkdir()
     monkeypatch.setenv("RAY_HOME", str(target))
-    for key in ("XAI_API_KEY", "GROK_API_KEY", "RAY_GROK_API_KEY", "GEMINI_API_KEY",
+    for key in ("CURSOR_API_KEY", "RAY_CURSOR_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "RAY_GROK_API_KEY", "GEMINI_API_KEY",
                 "GOOGLE_API_KEY", "RAY_GEMINI_API_KEY", "FISH_API_KEY", "FISH_AUDIO_API_KEY",
                 "RAY_FISH_API_KEY"):
         monkeypatch.delenv(key, raising=False)

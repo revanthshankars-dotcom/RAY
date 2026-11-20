@@ -557,34 +557,123 @@ const VIEWS = {};
 
 /* ------------------------------------------------------------------- home */
 const PROVIDERS = [
-  { name: 'grok', label: 'Grok', role: 'reasoning, planning, tool calls', keyUrl: 'https://console.x.ai', env: 'RAY_GROK_API_KEY' },
-  { name: 'gemini', label: 'Gemini', role: 'knowledge, documents, images', keyUrl: 'https://aistudio.google.com/apikey', env: 'RAY_GEMINI_API_KEY' },
-  { name: 'fish', label: 'Fish Audio', role: 'natural speech', keyUrl: 'https://fish.audio', env: 'RAY_FISH_API_KEY' },
+  {
+    name: 'cursor',
+    label: 'Cursor',
+    kind: 'cli',
+    role: 'primary reasoning · chat · code (official Cursor CLI)',
+    docs: 'https://cursor.com/cli',
+    env: 'RAY_CURSOR_API_KEY',
+    optional: false,
+  },
+  {
+    name: 'gemini',
+    label: 'Gemini',
+    kind: 'key',
+    role: 'documents · research · images · tool planning',
+    keyUrl: 'https://aistudio.google.com/apikey',
+    env: 'RAY_GEMINI_API_KEY',
+    optional: false,
+  },
+  {
+    name: 'fish',
+    label: 'Fish Audio',
+    kind: 'key',
+    role: 'natural speech',
+    keyUrl: 'https://fish.audio',
+    env: 'RAY_FISH_API_KEY',
+    optional: false,
+  },
+  {
+    name: 'grok',
+    label: 'Grok',
+    kind: 'key',
+    role: 'legacy reasoning engine (optional, off by default)',
+    keyUrl: 'https://console.x.ai',
+    env: 'RAY_GROK_API_KEY',
+    optional: true,
+  },
 ];
+
+const CURSOR_INSTALL = {
+  unix: 'curl https://cursor.com/install -fsS | bash',
+  windows: "irm 'https://cursor.com/install?win32=true' | iex",
+  login: 'cursor-agent login',
+};
+
+function describeProvider(name) {
+  const list = state.status?.provider_detail?.providers || [];
+  return list.find((entry) => entry.name === name) || null;
+}
 
 function providerState(name) {
   const health = (state.dashboard?.providers || {})[name] || {};
   const status = (state.status?.providers || {})[name] || {};
+  const described = describeProvider(name) || {};
   return {
-    available: Boolean(health.available ?? status.available),
-    configured: Boolean(status.configured ?? health.configured),
-    detail: health.detail || status.detail || '',
+    available: Boolean(health.available ?? status.available ?? described.available),
+    configured: Boolean(described.configured ?? status.configured ?? health.configured),
+    detail: health.detail || described.detail || status.detail || '',
+    binary: described.binary || '',
+    kind: name === 'cursor' ? 'cli' : 'key',
   };
+}
+
+function providerTone(entry) {
+  const current = providerState(entry.name);
+  if (current.available) return { tone: 'ok', label: entry.kind === 'cli' ? 'ready' : 'connected' };
+  if (current.configured) return { tone: 'warn', label: entry.kind === 'cli' ? 'needs sign-in' : 'unreachable' };
+  return { tone: 'bad', label: entry.kind === 'cli' ? 'CLI not found' : 'no key' };
+}
+
+function openCursorHelp() {
+  const current = providerState('cursor');
+  openModal(`
+    <h3>Cursor as RAY's reasoning engine</h3>
+    <p class="muted small">Cursor has no public chat API, so RAY drives the official Cursor CLI in
+      read-only print mode (<span class="mono">--mode ask</span>). Replies can never edit files or run
+      commands on this PC.</p>
+    <div class="list">
+      <div class="list-item" style="align-items:flex-start"><span class="grow">
+        <span class="title">1 · Install the CLI</span>
+        <div class="meta mono">${esc(CURSOR_INSTALL.unix)}</div>
+        <div class="meta">Windows PowerShell: <span class="mono">${esc(CURSOR_INSTALL.windows)}</span></div>
+      </span></div>
+      <div class="list-item" style="align-items:flex-start"><span class="grow">
+        <span class="title">2 · Sign in</span>
+        <div class="meta mono">${esc(CURSOR_INSTALL.login)}</div>
+        <div class="meta">…or store a Cursor API key in Settings; RAY passes it as <span class="mono">CURSOR_API_KEY</span>.</div>
+      </span></div>
+      <div class="list-item">
+        <span class="grow"><span class="title">3 · Check it</span>
+          <div class="meta">${esc(current.detail || 'Install the CLI, then run the test.')}</div></span>
+        <button class="btn sm" data-act="credential-test" data-name="cursor">Test</button>
+      </div>
+    </div>
+    <div class="faint tiny" style="margin-top:10px">If the CLI is missing, chat falls back to Gemini automatically.
+      Tool planning always runs on a tool-capable model, because the CLI cannot call RAY's 80 tools.</div>
+    <div class="modal-actions">
+      <button class="btn primary" data-act="go" data-section="settings">Open settings</button>
+      <button class="btn" data-act="close-modal">Close</button>
+    </div>`);
 }
 
 function openKeyHelp() {
   openModal(`
-    <h3>Connect your AI providers</h3>
-    <p class="muted small">Open <strong>Settings → AI providers</strong>, paste the key and press
-      <em>Save &amp; test</em>. RAY encrypts it with a key file inside its data folder and never
-      displays it again.</p>
+    <h3>Connect your AI</h3>
+    <p class="muted small">Cursor is the default reasoning engine and needs no key — just the CLI and a
+      sign-in. Gemini adds documents, research and tool planning; Fish Audio speaks. Keys are encrypted
+      with a key file inside RAY's data folder and never displayed again.</p>
     ${PROVIDERS.map((provider) => `
       <div class="list-item" style="align-items:flex-start">
         <span class="grow">
-          <span class="title">${esc(provider.label)}</span>
+          <span class="title">${esc(provider.label)}${provider.optional ? ' <span class="faint tiny">(optional)</span>' : ''}</span>
           <div class="meta">${esc(provider.role)}</div>
-          <div class="meta">Get a key: <a href="${provider.keyUrl}" target="_blank" rel="noreferrer noopener">${esc(provider.keyUrl)}</a></div>
-          <div class="meta mono">or set ${esc(provider.env)}</div>
+          ${provider.kind === 'cli'
+            ? `<div class="meta mono">${esc(CURSOR_INSTALL.unix)}</div>
+               <div class="meta">then <span class="mono">${esc(CURSOR_INSTALL.login)}</span> · <a href="${provider.docs}" target="_blank" rel="noreferrer noopener">${esc(provider.docs)}</a></div>`
+            : `<div class="meta">Get a key: <a href="${provider.keyUrl}" target="_blank" rel="noreferrer noopener">${esc(provider.keyUrl)}</a></div>
+               <div class="meta mono">or set ${esc(provider.env)}</div>`}
         </span>
       </div>`).join('')}
     <div class="banner warn" style="margin-top:12px">
@@ -597,33 +686,38 @@ function openKeyHelp() {
 }
 
 function providersCard() {
-  const rows = PROVIDERS.map((provider) => {
-    const state_ = providerState(provider.name);
-    const tone = state_.available ? 'ok' : state_.configured ? 'warn' : 'bad';
-    const label = state_.available ? 'connected' : state_.configured ? 'unreachable' : 'no key';
+  const entries = PROVIDERS.filter(
+    (provider) => !provider.optional || providerState(provider.name).configured || providerState(provider.name).available,
+  );
+  const rows = entries.map((provider) => {
+    const current = providerState(provider.name);
+    const { tone, label } = providerTone(provider);
+    const action = current.available
+      ? `<button class="btn sm ghost" data-act="credential-test" data-name="${provider.name}">Test</button>`
+      : provider.kind === 'cli'
+        ? '<button class="btn sm primary" data-act="cursor-help">Set up</button>'
+        : '<button class="btn sm primary" data-act="go" data-section="settings">Add key</button>';
     return `<div class="provider-row">
-      <span class="provider-dot ${tone}" title="${label}"></span>
+      <span class="provider-dot ${tone}" title="${esc(label)}"></span>
       <div>
         <div class="strong">${esc(provider.label)}</div>
-        <div class="faint tiny">${esc(state_.detail || provider.role)}</div>
+        <div class="faint tiny">${esc(current.detail || provider.role)}</div>
       </div>
       <div class="row">
-        <span class="pill ${tone}">${label}</span>
-        <button class="btn sm ${state_.configured ? 'ghost' : 'primary'}"
-          data-act="${state_.configured ? 'credential-test' : 'go'}"
-          ${state_.configured ? `data-name="${provider.name}"` : 'data-section="settings"'}>${state_.configured ? 'Test' : 'Add key'}</button>
+        <span class="pill ${tone}">${esc(label)}</span>
+        ${action}
       </div>
     </div>`;
   }).join('');
-  const online = PROVIDERS.some((provider) => providerState(provider.name).available);
+  const online = entries.some((provider) => providerState(provider.name).available);
   return `<div class="card">
     <div class="card-head"><h2>AI providers</h2><span class="spacer"></span>
       <span class="pill ${online ? 'ok' : 'warn'}">${online ? 'online' : 'offline'}</span></div>
     ${rows}
     <div class="row wrap" style="margin-top:10px">
-      <span class="faint tiny">Encrypted on this PC. Nothing is sent until you ask.</span>
+      <span class="faint tiny">Local first. Nothing is sent until you ask.</span>
       <span class="spacer"></span>
-      <button class="btn sm ghost" data-act="key-help">Where do I get keys?</button>
+      <button class="btn sm ghost" data-act="key-help">Setup guide</button>
     </div>
   </div>`;
 }
@@ -776,8 +870,8 @@ VIEWS.home = async function () {
 
   view().innerHTML = `
     ${data.offline ? `<div class="banner">
-      <span>RAY is running offline: local tasks, files, notes and monitoring work. Add a key to enable chat, research and speech.</span>
-      <button class="btn sm primary" data-act="key-help">Connect AI</button></div>` : ''}
+      <span>RAY is offline: local tasks, files, notes and monitoring work. Install the Cursor CLI or add a Gemini key to enable chat, research and speech.</span>
+      <button class="btn sm primary" data-act="key-help">Setup guide</button></div>` : ''}
     ${warnings.length ? `<div class="banner warn">⚠ ${esc(warnings.join(' · '))}</div>` : ''}
 
     <section class="home-top">
@@ -2395,7 +2489,11 @@ VIEWS.developer = async function () {
 
 /* --------------------------------------------------------------- settings */
 VIEWS.settings = async function () {
-  const [settings, providers] = await Promise.all([api('/api/settings'), api('/api/providers')]);
+  const [settings, providers, cursorInfo] = await Promise.all([
+    api('/api/settings'),
+    api('/api/providers'),
+    api('/api/providers/cursor').catch(() => null),
+  ]);
   state.settings = settings;
   const config = settings.config;
   const credentials = providers.credentials;
@@ -2412,22 +2510,48 @@ VIEWS.settings = async function () {
   const panels = {
     ai: `
       <div class="card">
+        <div class="card-head"><h2>Cursor CLI</h2><span class="spacer"></span>
+          <span class="pill ${cursorInfo?.available ? 'ok' : cursorInfo?.binary ? 'warn' : 'bad'}">${cursorInfo?.available ? 'ready' : cursorInfo?.binary ? 'needs sign-in' : 'not installed'}</span></div>
+        <p class="faint small">RAY's default reasoning engine. The official Cursor CLI is called in read-only
+          print mode (<span class="mono">--mode ask</span>); replies never edit files or run commands.</p>
+        <div class="form-row" style="margin-top:10px">
+          <label class="field"><span>CLI binary (blank = auto-detect)</span>
+            <input type="text" id="cursor-binary" value="${esc(config.ai.providers.cursor?.binary || '')}" placeholder="cursor-agent" /></label>
+          <label class="field"><span>Working folder (blank = RAY home)</span>
+            <input type="text" id="cursor-workspace" value="${esc(config.ai.providers.cursor?.workspace || '')}" placeholder="optional" /></label>
+          <label class="field"><span>Model (blank = account default)</span>
+            <input type="text" id="cursor-model" value="${esc(config.ai.providers.cursor?.model || '')}" placeholder="auto" /></label>
+        </div>
+        <div class="row wrap" style="margin-top:10px">
+          <button class="btn primary" id="save-cursor">Save</button>
+          <button class="btn" data-act="credential-test" data-name="cursor">Test CLI</button>
+          ${cursorInfo?.version ? `<span class="faint tiny">${esc(cursorInfo.version)}</span>` : ''}
+        </div>
+        <div class="mono-wrap" style="margin-top:10px">${cursorInfo?.binary ? esc(cursorInfo.binary) : 'not found on PATH'}${cursorInfo?.detail ? ` · ${esc(cursorInfo.detail)}` : ''}</div>
+        <div class="section-title" style="margin-top:14px">Install &amp; sign in</div>
+        <div class="mono-wrap">${esc(CURSOR_INSTALL.unix)}<br/>${esc(CURSOR_INSTALL.windows)}<br/>${esc(CURSOR_INSTALL.login)}</div>
+        <div class="faint tiny" style="margin-top:6px">Docs:
+          <a href="https://cursor.com/cli" target="_blank" rel="noreferrer noopener">cursor.com/cli</a></div>
+      </div>
+      <div class="card">
         <div class="card-head"><h2>Credentials</h2><span class="spacer"></span>
         <span class="pill">stored encrypted on this machine</span></div>
-        <p class="faint small">Keys are encrypted with a local key file and never sent to the interface after saving. You can also set them as environment variables.</p>
+        <p class="faint small">Keys are encrypted with a local key file and never sent to the interface after saving.
+          Cursor needs no key at all — use <span class="mono">cursor-agent login</span>, or paste a Cursor API key here if you prefer.
+          Everything else can also come from environment variables.</p>
         <div class="col" style="margin-top:12px">
           ${credentials.map((credential) => `
             <div class="card tight">
               <div class="credential-row">
                 <div>
-                  <strong style="text-transform:capitalize">${esc(credential.name)}</strong>
+                  <strong style="text-transform:capitalize">${esc(credential.name)}</strong>${credential.name === 'cursor' ? ' <span class="faint tiny">(optional API key)</span>' : ''}
                   <div class="faint tiny">
                     ${credential.configured
                       ? `configured (${esc(credential.source)})${credential.last_test_detail ? ` · ${esc(credential.last_test_detail)}` : ''}`
                       : 'not configured'}
                   </div>
                 </div>
-                <input type="password" id="cred-${credential.name}" placeholder="paste API key" />
+                <input type="password" id="cred-${credential.name}" placeholder="${credential.name === 'cursor' ? 'optional — login works too' : 'paste API key'}" />
                 <div class="row">
                   <button class="btn sm" data-act="credential-save" data-name="${credential.name}">Save &amp; test</button>
                   <button class="btn sm ghost" data-act="credential-test" data-name="${credential.name}">Test</button>
@@ -2440,8 +2564,8 @@ VIEWS.settings = async function () {
       <div class="card">
         <div class="card-head"><h2>Models &amp; routing</h2></div>
         <div class="form-row">
-          ${['grok', 'gemini', 'fish'].map((name) => `
-            <label class="field"><span>${name} model</span>
+          ${['cursor', 'gemini', 'grok', 'fish'].map((name) => `
+            <label class="field"><span>${name === 'cursor' ? 'cursor model (blank = auto)' : `${name} model`}</span>
               <input type="text" id="model-${name}" value="${esc(config.ai.providers[name]?.model || '')}" />
             </label>`).join('')}
           <label class="field"><span>Fish Audio voice id</span>
@@ -2564,8 +2688,26 @@ VIEWS.settings = async function () {
     };
 
     if (tab === 'ai') {
+      const cursorSave = $('#save-cursor');
+      if (cursorSave) {
+        cursorSave.addEventListener('click', async () => {
+          try {
+            await api('/api/providers/cursor', {
+              method: 'POST',
+              body: {
+                binary: $('#cursor-binary').value.trim(),
+                workspace: $('#cursor-workspace').value.trim(),
+                model: $('#cursor-model').value.trim(),
+              },
+            });
+            toast('Cursor settings saved', '', 'ok');
+            await refreshStatus();
+            await VIEWS.settings();
+          } catch (error) { toast('Could not save', error.message, 'error'); }
+        });
+      }
       $('#save-models').addEventListener('click', async () => {
-        for (const name of ['grok', 'gemini', 'fish']) {
+        for (const name of ['cursor', 'gemini', 'grok', 'fish']) {
           const value = $(`#model-${name}`).value.trim();
           if (value) await api('/api/providers/model', { method: 'POST', body: { name, model: value } }).catch(() => {});
         }
@@ -2575,7 +2717,7 @@ VIEWS.settings = async function () {
         toast('Models saved', '', 'ok');
       });
       $('#test-all').addEventListener('click', async () => {
-        for (const name of ['grok', 'gemini', 'fish']) {
+        for (const name of ['cursor', 'gemini', 'fish']) {
           try {
             const result = await api('/api/providers/test', { method: 'POST', body: { name } });
             toast(`${name}: ${result.available ? 'connected' : 'not available'}`, result.detail, result.available ? 'ok' : 'warn', 6000);
@@ -2660,6 +2802,7 @@ const ACTIONS = {
   go: (dataset) => { closeModal(); go(dataset.section); },
   palette: () => openPalette(),
   'key-help': () => openKeyHelp(),
+  'cursor-help': () => openCursorHelp(),
   'calendar-day': (dataset) => {
     const [year, month] = String(dataset.date).split('-').map(Number);
     state.calendarMonth = { year, month };

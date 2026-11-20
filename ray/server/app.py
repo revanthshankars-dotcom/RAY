@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import __version__
 from ..core.logging_setup import get_logger
+from ..security.credentials import PROVIDERS as CREDENTIAL_PROVIDERS
 from ..security.permissions import LEVEL_AUTO
 
 log = get_logger("server")
@@ -803,7 +804,7 @@ def providers(app, **_: Any) -> Any:
         "health": app.router.health(),
         "models": {
             name: app.config.get(f"ai.providers.{name}.model", "")
-            for name in ("grok", "gemini", "fish")
+            for name in ("cursor", "grok", "gemini", "fish")
         },
         "usage": app.router.usage.today(),
     }
@@ -817,12 +818,54 @@ def providers_test(app, body=None, **_: Any) -> Any:
     return app.router.test_provider(name)
 
 
+@route("GET", "/api/providers/cursor")
+def providers_cursor_status(app, **_: Any) -> Any:
+    provider = app.router.provider("cursor")
+    if provider is None:
+        raise ApiError("the cursor provider is not registered")
+    described = provider.describe()
+    return {
+        "name": "cursor",
+        "binary": described.get("binary", "") or "",
+        "version": provider.version() if described.get("binary") else "",
+        "model": described.get("model", ""),
+        "workspace": described.get("workspace", ""),
+        "configured": described.get("configured", False),
+        "available": described.get("available", False),
+        "detail": described.get("detail", ""),
+        "authenticated": bool(described.get("binary")) and not any(
+            marker in str(described.get("detail", "")).lower()
+            for marker in ("not signed", "not logged")
+        ),
+        "install": {
+            "macos_linux_wsl": "curl https://cursor.com/install -fsS | bash",
+            "windows": "irm 'https://cursor.com/install?win32=true' | iex",
+            "login": "cursor-agent login",
+            "docs": "https://cursor.com/cli",
+        },
+    }
+
+
+@route("POST", "/api/providers/cursor")
+def providers_cursor_update(app, body=None, **_: Any) -> Any:
+    body = body or {}
+    for field in ("binary", "workspace", "model"):
+        if field in body:
+            app.config.set(f"ai.providers.cursor.{field}", str(body.get(field) or "").strip())
+    if "enabled" in body:
+        app.config.set("ai.providers.cursor.enabled", bool(body.get("enabled")))
+    app.router.rebuild()
+    app.audit.record("cursor_provider_updated", target="cursor", result="ok")
+    return {"saved": True, "health": app.router.health()}
+
+
 @route("POST", "/api/credentials")
+
 def credentials_set(app, body=None, **_: Any) -> Any:
     body = body or {}
     name = str(body.get("name", "")).strip().lower()
     value = str(body.get("value", ""))
-    if name not in ("grok", "gemini", "fish"):
+    if name not in CREDENTIAL_PROVIDERS:
         raise ApiError("unknown provider")
     app.credentials.set(name, value)
     app.router.rebuild()
@@ -844,7 +887,7 @@ def credentials_delete(app, body=None, **_: Any) -> Any:
 def providers_model(app, body=None, **_: Any) -> Any:
     body = body or {}
     name = str(body.get("name", "")).strip().lower()
-    if name not in ("grok", "gemini", "fish"):
+    if name not in CREDENTIAL_PROVIDERS:
         raise ApiError("unknown provider")
     if body.get("model"):
         app.config.set(f"ai.providers.{name}.model", str(body["model"]).strip())

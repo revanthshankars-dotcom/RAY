@@ -8,8 +8,9 @@ automation — through a validated command layer instead of pretending.
 - **Engine**: Python 3.10+, SQLite (WAL) + FTS5, standard library HTTP server.
 - **Interface**: its own window (PySide6/QtWebEngine) showing a local web UI
   served at `127.0.0.1:8765`. No build step, no external assets, no CDN.
-- **AI**: Grok for reasoning, Gemini for knowledge/documents/images, Fish Audio
-  for speech. All optional and swappable — everything that does not need a model
+- **AI**: Cursor CLI for reasoning (Grok has been retired from the default
+  routes), Gemini for knowledge/documents/images/tool planning, Fish Audio for
+  speech. All optional and swappable — everything that does not need a model
   (files, tasks, notes, calendar, monitoring, automation) works offline.
 - **Footprint**: a few threads, no local model, ~120 MB of RAM in normal use.
   Designed for a Celeron-class laptop with 8 GB of RAM and no GPU.
@@ -62,20 +63,42 @@ logs/            rotating, redacted logs
 Open **Settings → AI providers**. Keys are encrypted with a local Fernet key and
 never appear in the interface, logs or `config.json`.
 
-| Provider | Role | Where to get a key | Default endpoint / model |
+| Provider | Role | Setup | Default model |
 | --- | --- | --- | --- |
-| **Grok** (xAI) | reasoning, planning, tool selection, code | <https://console.x.ai> | `https://api.x.ai/v1`, `grok-4` |
-| **Gemini** (Google) | knowledge, long documents, images/PDF | <https://aistudio.google.com/apikey> | `https://generativelanguage.googleapis.com/v1beta`, `gemini-2.5-flash` |
-| **Fish Audio** | text to speech | <https://fish.audio> → API keys | `https://api.fish.audio`, model `s2.1-pro-free` |
+| **Cursor** (default) | reasoning, chat, code | official CLI — `curl https://cursor.com/install -fsS \| bash`, then `cursor-agent login` | account default |
+| **Gemini** (Google) | knowledge, long documents, images/PDF, tool planning | key from <https://aistudio.google.com/apikey> | `gemini-2.5-flash` |
+| **Fish Audio** | text to speech | key from <https://fish.audio> | `s2.1-pro-free` |
+| **Grok** (xAI, opt-in) | legacy reasoning engine | key from <https://console.x.ai> | `grok-4` |
+
+### Cursor instead of Grok
+
+Cursor publishes no OpenAI-compatible chat endpoint, so RAY drives the official
+Cursor CLI in read-only print mode:
+
+```
+cursor-agent --print --mode ask --output-format text "<prompt>"
+```
+
+* Windows: `irm 'https://cursor.com/install?win32=true' | iex`, then
+  `cursor-agent login`.
+* RAY never passes `--force`/`--yolo`, so a reply cannot edit files or run
+  commands on your PC.
+* The CLI cannot call RAY's own tools, so **planning and tool selection keep
+  using Gemini**; chat, reasoning and code go to Cursor first.
+* An optional Cursor API key can be stored in Settings instead of logging in
+  (passed to the CLI as `CURSOR_API_KEY`).
+* If the CLI is missing, RAY says so in **Home → AI providers → Set up** and
+  falls back to Gemini for chat.
 
 Fish Audio: paste a **voice model id** (`reference_id`) if you want one of your
 cloned voices; leave it empty for the default voice. Click **Load voices** to
 list the voices on your account, and **Test** to verify each provider.
 
-You can also supply keys through the environment — `RAY_GROK_API_KEY`,
-`RAY_GEMINI_API_KEY`, `RAY_FISH_API_KEY` (aliases `XAI_API_KEY`,
-`GEMINI_API_KEY`, `FISH_AUDIO_API_KEY` are recognised). A key saved in the
-interface wins over the environment. RAY does **not** read `.env` files.
+You can also supply keys through the environment — `RAY_GEMINI_API_KEY`,
+`RAY_FISH_API_KEY` and, if you keep Grok, `RAY_GROK_API_KEY` (aliases
+`GEMINI_API_KEY`, `FISH_AUDIO_API_KEY`, `XAI_API_KEY`, `CURSOR_API_KEY` are
+recognised). A key saved in the interface wins over the environment. RAY does
+**not** read `.env` files.
 
 Without keys, RAY runs in offline mode: local commands, files, productivity,
 monitoring and automation all work; chat and speech say plainly that a provider
@@ -177,7 +200,7 @@ RAY.bat                  Windows double-click launcher
 ray/
   core/        paths, redacting logs, config, SQLite schema/migrations, event bus
   security/    credential vault, permissions/approvals, audit, secret detection
-  ai/          base types, grok, gemini, fish, cache/usage, router
+  ai/          base types, cursor (CLI), gemini, grok (opt-in), fish, cache/usage, router
   tools/       80-tool registry + validated execution
   computer/    system metrics, apps, files (quarantine/backup), controls, shell
   productivity/ tasks, notes, reminders, calendar, focus & habits
@@ -192,14 +215,14 @@ ray/
   ui/          HTML/CSS/JS interface (no build step)
   desktop/     optional PySide6 window with tray icon
 scripts/       install.ps1, ui_smoke.mjs
-tests/         pytest suite (179 tests)
+tests/         pytest suite (196 tests)
 ```
 
 ## Testing
 
 ```bash
 pip install pytest
-python -m pytest                     # 179 tests, offline, no keys needed
+python -m pytest                     # 196 tests, offline, no keys needed
 ```
 
 The suite covers the database, credential vault, permission/approval flow,
@@ -230,7 +253,7 @@ through the UI and runs a command, failing on any error.
 | Microphone does nothing | Allow mic access for `localhost` in the browser; select the device in Voice |
 | "Volume control is unavailable" | Install `pycaw` on Windows (publisher: `pip install pycaw`) |
 | Keyboard/mouse tools refuse | `pip install pynput` and approve the action |
-| Offline chat message | Add a Grok or Gemini key; local tools keep working |
+| Offline chat message | Install the Cursor CLI or add a Gemini key; local tools keep working |
 | Running behind a reverse proxy | Set `RAY_ALLOW_REMOTE_ORIGIN=1`; cross-site writes are refused otherwise |
 
 Detailed status, including what is and is not verified, is in
